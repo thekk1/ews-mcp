@@ -27,7 +27,9 @@ proxy, no Microsoft 365 connector.
 A greenfield rewrite of this server lives in [`v5/`](v5/): a consolidated
 28-tool surface, alias-only ids, token-lean responses, and a cache-first
 local mirror. It ships side-by-side (images tagged `:v4.5*`, never
-`:latest`) and does not change anything under `src/`. Start at
+`:latest`) and does not change anything under `src/`. It runs locally
+**without Docker** over stdio (Claude Code / Claude Desktop / any MCP
+client) — one `pip install ./v5` plus a client config block. Start at
 [`v5/README.md`](v5/README.md).
 
 ## At a glance

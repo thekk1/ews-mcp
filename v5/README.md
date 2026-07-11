@@ -10,6 +10,111 @@ tamper-evident.
 > **4.5.x** (`ghcr.io/…:v4.5*`). Architecture: [DESIGN.md](DESIGN.md).
 > Full API reference: [docs/API.md](docs/API.md).
 
+## Quick start — run it locally over stdio (no Docker)
+
+stdio is the default transport and the simplest way to use this server:
+your MCP client (Claude Code, Claude Desktop, or any other) starts
+`ewsmcp` as a child process and talks to it over stdin/stdout. There is
+no port, no API key, and nothing listening on the network — and because
+it runs as a normal process on your machine, it reaches Exchange through
+whatever network your machine has, **including a corporate VPN**. If
+your Exchange endpoint is only reachable from your workstation, this is
+the mode you want; a container or a remote host would not have that
+route.
+
+**1. Install** (Python 3.11+):
+
+```bash
+git clone https://github.com/azizmazrou/ews-mcp && cd ews-mcp
+python -m venv .venv
+source .venv/bin/activate        # Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install ./v5
+```
+
+You now have an `ewsmcp` command inside the venv:
+`.venv/bin/ewsmcp` — on Windows `.venv\Scripts\ewsmcp.exe`. Use that
+**absolute path** in the client configs below.
+
+**2. Connect Claude Code** (one command, then restart the session):
+
+```bash
+claude mcp add exchange \
+  -e EWS_SERVER_URL="https://mail.example.com/EWS/Exchange.asmx" \
+  -e EWS_EMAIL="user@example.com" \
+  -e EWS_USERNAME="user" \
+  -e EWS_PASSWORD="…" \
+  -- /absolute/path/to/.venv/bin/ewsmcp
+```
+
+On Windows, write it on one line and point at `ewsmcp.exe`. Check with
+`claude mcp list` — the server should show as connected.
+
+**3. Or Claude Desktop** — add to `claude_desktop_config.json`
+(Settings → Developer → Edit Config):
+
+```json
+{
+  "mcpServers": {
+    "exchange": {
+      "command": "C:\\path\\to\\.venv\\Scripts\\ewsmcp.exe",
+      "env": {
+        "EWS_SERVER_URL": "https://mail.example.com/EWS/Exchange.asmx",
+        "EWS_EMAIL": "user@example.com",
+        "EWS_USERNAME": "user",
+        "EWS_PASSWORD": "…"
+      }
+    }
+  }
+}
+```
+
+Any other MCP client works the same way: command = the `ewsmcp` path,
+credentials in `env`. Prefer a file? Copy [`.env.example`](.env.example)
+to `.env` in the directory you launch `ewsmcp` from — it auto-loads.
+
+That is the whole setup. The defaults are safe: capability tier `draft`
+(23 read + draft tools; nothing can send), `SEND_ENABLED=false` until
+you flip it, and mail-at-rest (aliases, audit chain, cache) goes to
+`~/.ewsmcp`. The server **refuses cloud-synced folders** for that data —
+if your home directory lives in OneDrive/Dropbox/iCloud, set `DATA_DIR`
+to a plain local path.
+
+**First things to try in a chat:**
+
+- "What's in my inbox this morning?" → `get_mailbox_overview`
+- "Find the last message from the finance team" → `search_messages`
+- "Show me that whole conversation" → `get_thread`
+- "Draft a short reply to m3 saying I'll confirm tomorrow" →
+  `create_draft` (saved as a draft, never sent)
+- "What's on my calendar this week?" → `list_events`
+
+Ids like `m3` / `e1` are the server's short aliases — the assistant uses
+them exactly as returned; raw Exchange ids never appear.
+
+## HTTP transport (only when the server runs on another machine)
+
+If the server runs where the client isn't (a home server, for example),
+serve HTTP instead:
+
+```bash
+MCP_TRANSPORT=http MCP_PORT=8000 MCP_API_KEY=<long-random-string> ewsmcp
+```
+
+- MCP endpoint: `http://host:8000/mcp` (Streamable HTTP, the modern
+  replacement for SSE). Clients that only speak stdio can bridge:
+  `npx mcp-remote http://host:8000/mcp --header "Authorization: Bearer <key>"`.
+- Plain REST for scripts: `POST /api/tools/<name>` with an `x-api-key`
+  header; OpenAPI at `/openapi.json`.
+- Health: `GET /livez`, `/readyz`, `/health`.
+
+Docker (containerized HTTP mode — note a container only sees the
+network of its host, not your workstation's VPN):
+
+```bash
+docker build -t ews-mcp:dev .
+docker run --rm -p 8000:8000 --env-file .env -v ewsmcp-data:/data ews-mcp:dev
+```
+
 ## Why it looks like this
 
 - **Token economy.** One legacy detail call shipped 115 kB of duplicated
@@ -33,25 +138,6 @@ tamper-evident.
   `/livez` is up immediately, `/readyz` reports the warmup honestly, and
   the connection manager owns recovery.
 
-## Quick start
-
-```bash
-pip install .                    # or: pip install -e .[dev]
-export EWS_SERVER_URL="https://mail.example.com/EWS/Exchange.asmx"
-export EWS_EMAIL="user@example.com"
-export EWS_USERNAME="user" EWS_PASSWORD="…"
-export DATA_DIR="/var/lib/ewsmcp"          # local disk, NEVER a synced folder
-ewsmcp                                      # stdio MCP (Claude Desktop etc.)
-MCP_TRANSPORT=http MCP_PORT=8000 ewsmcp     # HTTP: /mcp + REST + health
-```
-
-Docker:
-
-```bash
-docker build -t ews-mcp:dev .
-docker run --rm -p 8000:8000 --env-file .env -v ewsmcp-data:/data ews-mcp:dev
-```
-
 ## Configuration (env)
 
 | Variable | Default | Meaning |
@@ -63,7 +149,7 @@ docker run --rm -p 8000:8000 --env-file .env -v ewsmcp-data:/data ews-mcp:dev
 | `EWS_MAX_SENDS_PER_HOUR` | `10` | Send rate cap |
 | `SEND_CONFIRM_SECRET` | per-process | HMAC secret for confirm tokens (set it to survive restarts) |
 | `CONFIRM_TTL_SECONDS` | `600` | Confirm token lifetime |
-| `MCP_TRANSPORT` / `MCP_HOST` / `MCP_PORT` / `MCP_API_KEY` | stdio | HTTP serving + bearer auth |
+| `MCP_TRANSPORT` / `MCP_HOST` / `MCP_PORT` / `MCP_API_KEY` | stdio | HTTP serving + bearer auth (all unused in stdio mode) |
 | `DATA_DIR` | `~/.ewsmcp` | Aliases, audit chain, cache mirror. Absolute; cloud-synced paths are refused (`DATA_DIR_ALLOW_SYNCED=true` to override) |
 | `EWS_CACHE_ENABLED` | `true` | The mirror; `false` = pure live EWS reads |
 | `EWS_CACHE_FOLDERS` | `inbox,sent` | Delta-synced folders |
@@ -93,8 +179,9 @@ send_draft(draft_id="d1", confirm_token="…")
 `GET /livez` (process up), `GET /readyz` (connection state, honest 503
 while warming), `GET /health` (tool count), `GET /metrics` (Prometheus,
 bearer-authenticated), `get_server_status` tool (connection, tier,
-kill-switch, cache watermarks, sync status — works while cold).
-Audit chain: `python scripts/verify_audit_chain.py $DATA_DIR/audit`.
+kill-switch, cache watermarks, sync status — works while cold and over
+stdio too). Audit chain:
+`python scripts/verify_audit_chain.py $DATA_DIR/audit`.
 
 ## Development
 
