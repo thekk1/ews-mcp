@@ -1,5 +1,60 @@
 # Changelog
 
+## [4.5.0a1] - 2026-07-11 (pre-release; the `v5/` tree)
+
+The greenfield server (`v5/ewsmcp`, package `ews-mcp` 4.5.0a1) reaches
+alpha: consolidated 28-tool surface, alias-only ids, token-lean DTOs, and
+a cache-first local mirror. Ships side-by-side with v3 — nothing in
+`src/` changes. Full reference: `v5/docs/API.md`; architecture:
+`v5/DESIGN.md`.
+
+### Fixed (v5 pre-release criticals)
+- `get_thread` passed a string `conversation_id` to `filter()` —
+  exchangelib 5.0.3 requires the `ConversationId` object (the tool was
+  100% broken; the old unit test pinned the broken behavior).
+- Recipient allow/denylists were dead code: they now fire on every tool
+  whose arguments carry recipients AND on the draft's resolved
+  recipients inside `send_draft`.
+- `send_draft` confirmation is content-bound (ported from v3.5): the
+  token hashes subject + sorted recipients + full body and phase 2
+  refetches and re-verifies — editing a draft between preview and
+  confirm invalidates the token. Tokens are single-use.
+- The connection probe read a cached property and reported warm forever;
+  it now performs a real round trip every time, and `reset()` evicts
+  exchangelib's protocol cache so auth genuinely renegotiates.
+
+### Added
+- Cache-first mirror: background EWS delta-sync into per-mailbox SQLite
+  (WAL, single-writer, FTS5), cleaned bodies stored once, provenance
+  stamps (`source`/`as_of`) and a `fresh` escape hatch on every read.
+- Arabic-correct search: one normalization for index and query
+  (diacritics, tatweel, alef/hamza/teh-marbuta/alef-maqsura folds,
+  Arabic-Indic digits) — gated by a mandatory test suite.
+- New tools: `get_contact`, `list_tasks`, `update_task`, `waiting_on`
+  (sent threads with no reply), and `find_similar` when the optional
+  pgvector/Ollama semantic tier is enabled (`EWS_SEMANTIC_INDEX`).
+- Prometheus `/metrics`; audit-chain persistence across restarts + a
+  verifier script; per-sender learned-signature stripping; REST-shim
+  schema validation, body cap and disconnect handling.
+- Structural guards: exchangelib signature/behavior pins, lazy-import
+  sentinel, envelope contract, north-star budget test (≤2 calls / <2k
+  tokens for "last email from X → reply as draft").
+
+### Performance
+- `QuerySet.count()` eliminated from every list path (lookahead
+  pagination; exact totals only where cheap); field projections on all
+  bulk fetches; server-side calendar expansion caps; alias mints batched
+  off the event loop; audit writes off the event loop.
+
+### Removed / changed (vs the 67-tool v3 surface)
+- Draft-first only: no one-shot send tools. Impersonation, OAuth2,
+  folder/contact management, MIME export and the server-side
+  agent-secretary stack are intentionally dropped (see `v5/docs/API.md`
+  for the full rename map and rationale).
+- `update_messages.set_flag` removed from the schema (the backend has no
+  first-class flag field; categories are the marker).
+- `search_messages.from_` deprecated in favor of `sender`.
+
 ## v4.0.1 — 2026-05-03
 
 ### `?api_key=` query-param auth — Claude Desktop UI compatibility
