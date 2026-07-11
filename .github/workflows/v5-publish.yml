@@ -1,0 +1,45 @@
+# Publish the v5 image to GHCR on v4.5.* tags — gated on the FULL v5 test
+# workflow (no continue-on-error anywhere). NEVER tags :latest — promotion
+# of :latest is a deliberate manual act after the canary ladder completes.
+name: v5-publish
+
+on:
+  push:
+    tags: ["v4.5.*"]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    uses: ./.github/workflows/v5-tests.yml
+
+  publish:
+    needs: tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve tags
+        id: tags
+        run: |
+          REF="${{ github.ref_name }}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            REF="v4.5-manual-${GITHUB_SHA::8}"
+          fi
+          echo "exact=ghcr.io/${{ github.repository_owner }}/ews-mcp:${REF}" >> "$GITHUB_OUTPUT"
+          echo "line=ghcr.io/${{ github.repository_owner }}/ews-mcp:v4.5" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: v5
+          file: v5/Dockerfile
+          push: true
+          # The exact tag is what the NAS canary pins; :v4.5 tracks the line.
+          tags: |
+            ${{ steps.tags.outputs.exact }}
+            ${{ steps.tags.outputs.line }}

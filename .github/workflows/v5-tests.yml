@@ -1,0 +1,74 @@
+# v5 CI: everything BLOCKING — no continue-on-error anywhere in this file.
+# Also callable from v5-publish.yml so publishing can never skip the tests.
+name: v5-tests
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "v5/**"
+      - ".github/workflows/v5-tests.yml"
+      - ".github/workflows/v5-publish.yml"
+  pull_request:
+    paths:
+      - "v5/**"
+      - ".github/workflows/v5-tests.yml"
+  workflow_call:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install
+        run: pip install -e ./v5[dev]
+      - name: Lint (blocking)
+        run: ruff check v5
+      - name: Unit + contract suites (blocking)
+        working-directory: v5
+        run: python -m pytest tests -q
+      - name: Docs match the registry (blocking)
+        working-directory: v5
+        run: python scripts/dump_tool_table.py --check
+
+  boot-smoke:
+    # No-Exchange end-to-end: the real HTTP server against a dead endpoint —
+    # never-exit boot, tier filtering, kill-switch, cold-gate, OpenAPI.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install ./v5
+      - name: Boot smoke (tier=full)
+        working-directory: v5
+        run: python scripts/boot_smoke.py full
+      - name: Boot smoke (tier=draft)
+        working-directory: v5
+        run: python scripts/boot_smoke.py draft
+      - name: Boot smoke (cache disabled)
+        working-directory: v5
+        env:
+          EWS_CACHE_ENABLED: "false"
+        run: python scripts/boot_smoke.py full
+
+  docker-build:
+    needs: [tests, boot-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t ews-mcp:ci v5
+      - name: Import smoke inside the image
+        run: docker run --rm ews-mcp:ci python -c "import ewsmcp.main, ewsmcp.http, ewsmcp.cache.store; print('import smoke OK')"
