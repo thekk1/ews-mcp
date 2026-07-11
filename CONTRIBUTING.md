@@ -6,9 +6,9 @@ and how to engage with it productively.
 ## Repository layout
 
 ```
-src/                     production source
-docs/                    user-facing documentation
-scripts/                 build / deploy / setup scripts
+v5/                      the 4.5 server (current line)
+src/                     legacy 4.0 source (ships as :latest)
+docs/                    documentation map; docs/legacy/ = 4.0 docs
 .github/workflows/       CI: docker-publish.yml + docker-build-test.yml
 Dockerfile               container build
 docker-compose.yml       reference docker-compose for local dev

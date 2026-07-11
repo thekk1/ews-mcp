@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Documentation
+- Repository-wide revamp: the root README is now a single front door
+  (version guide, stdio-first quick start); `docs/README.md` maps all
+  documentation; the ten 4.0-era documents moved to `docs/legacy/` with
+  banners; `v5/docs/API.md` gained a generated per-tool parameter
+  reference (`dump_tool_table.py` now emits and drift-checks it).
+
+### Removed
+- Legacy helper scripts (`run.sh`, `scripts/build.sh`,
+  `scripts/deploy.sh`, `scripts/setup.sh`,
+  `scripts/setup-basic-auth.sh`) and redundant configuration examples
+  (`.env.basic.example`, `.env.oauth2.example`, `.env.ai.example`).
+  One template per line remains: root `.env.example` (4.0) and
+  `v5/.env.example` (4.5).
+
 ## [4.5.0a1] - 2026-07-11 (pre-release; the `v5/` tree)
 
 The greenfield server (`v5/ewsmcp`, package `ews-mcp` 4.5.0a1) reaches
