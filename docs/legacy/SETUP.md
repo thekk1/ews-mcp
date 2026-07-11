@@ -1,3 +1,8 @@
+> **Legacy 4.0 documentation** — this page describes the `src/` server
+> that ships as `ghcr.io/azizmazrou/ews-mcp:latest`. For the current
+> 4.5 line see [`v5/README.md`](../../v5/README.md) and
+> [`v5/docs/API.md`](../../v5/docs/API.md).
+
 # Setup Guide
 
 Step-by-step guide to install and configure the EWS MCP Server.
@@ -67,17 +72,7 @@ git clone <repository-url>
 cd ews-mcp-server
 ```
 
-#### Step 2: Run Setup Script
-
-```bash
-# Make script executable (Linux/Mac)
-chmod +x scripts/setup.sh
-
-# Run setup
-./scripts/setup.sh
-```
-
-Or manually:
+#### Step 2: Create the environment
 
 ```bash
 # Create virtual environment

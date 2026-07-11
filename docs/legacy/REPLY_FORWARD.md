@@ -1,3 +1,8 @@
+> **Legacy 4.0 documentation** — this page describes the `src/` server
+> that ships as `ghcr.io/azizmazrou/ews-mcp:latest`. For the current
+> 4.5 line see [`v5/README.md`](../../v5/README.md) and
+> [`v5/docs/API.md`](../../v5/docs/API.md).
+
 # Reply & Forward Email Tools
 
 This document describes the `reply_email` and `forward_email` tools for the EWS MCP Server.
