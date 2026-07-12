@@ -73,9 +73,6 @@ RUN grep -q "VERSION: 3.4.0 - RELIABILITY & ASYNC" /app/src/tools/contact_intell
     python -m py_compile /app/src/core/*.py /app/src/services/*.py /app/src/adapters/*.py || \
     (echo "ERROR: Python syntax errors" && exit 1)
 
-# Copy scripts
-COPY --chown=mcp:mcp scripts/ ./scripts/
-
 # Copy entrypoint script (keep as root for now)
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
