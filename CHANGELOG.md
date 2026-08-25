@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+- `v5`: rules conditions `sender_contains`/`recipient_contains`
+  (`ContainsSenderStrings`/`ContainsRecipientStrings`) — the substring
+  match Outlook/OWA's own simple rule editor builds ("contains these
+  words in the sender's/recipient's address"), distinct from the exact-
+  address `from_addresses`/`sent_to_addresses` already supported. Found
+  live: a real "BMW OUT" rule (contains "bmw." in the recipient address)
+  showed up conditionless with `ContainsRecipientStrings` flagged
+  unsupported — this was the dominant real-world rule pattern, not an
+  edge case.
+
 ### Fixed
 - `v5`: OAuth discovery paths (`/.well-known/oauth-*`, `/register`) now
   404 instead of inheriting the `MCP_API_KEY` gate's 401. This server

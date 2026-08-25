@@ -31,8 +31,9 @@ from ..gateway.rules import (
 )
 from .base import Context, ToolSpec
 
-_CONDITION_KEYS = ("subject_contains", "body_contains", "from_addresses",
-                   "sent_to_addresses", "has_attachments", "importance")
+_CONDITION_KEYS = ("subject_contains", "body_contains", "sender_contains",
+                   "recipient_contains", "from_addresses", "sent_to_addresses",
+                   "has_attachments", "importance")
 _ACTION_KEYS = ("move_to_folder", "copy_to_folder", "forward_to", "redirect_to",
                 "delete", "permanent_delete", "mark_as_read", "mark_importance",
                 "stop_processing")
@@ -176,8 +177,19 @@ def _condition_props() -> Dict[str, Any]:
     return {
         "subject_contains": {**_STRINGS, "description": "Subject must contain ANY of these substrings."},
         "body_contains": {**_STRINGS, "description": "Body must contain ANY of these substrings."},
-        "from_addresses": {**_EMAILS, "description": "Sender must be one of these addresses."},
-        "sent_to_addresses": {**_EMAILS, "description": "A To/Cc recipient must be one of these addresses."},
+        "sender_contains": {**_STRINGS, "description": (
+            "From address must contain ANY of these substrings (e.g. a domain "
+            "fragment like 'bmw.'). This is what Outlook/OWA's simple rule "
+            "editor builds for \"contains these words in the sender's "
+            "address\" — prefer this over from_addresses unless you have "
+            "exact, complete addresses.")},
+        "recipient_contains": {**_STRINGS, "description": (
+            "A To/Cc address must contain ANY of these substrings. Same "
+            "relationship to sent_to_addresses as sender_contains has to "
+            "from_addresses — this is OWA's \"contains these words in the "
+            "recipient address\" condition.")},
+        "from_addresses": {**_EMAILS, "description": "Sender must be one of these EXACT addresses."},
+        "sent_to_addresses": {**_EMAILS, "description": "A To/Cc recipient must be one of these EXACT addresses."},
         "has_attachments": {"type": "boolean", "description": "Message must have an attachment."},
         "importance": {**_IMPORTANCE_ENUM, "description": "Message must be stamped with this importance."},
     }

@@ -69,11 +69,14 @@ def test_condition_element_order_matches_ews_schema():
         "from_addresses": ["a@x.com"],
         "subject_contains": ["hi"],
         "body_contains": ["hello"],
+        "sender_contains": ["bmw."],
+        "recipient_contains": ["bmw."],
     }
     elem = build_conditions_element(conditions)
     tags = [child.tag.split("}", 1)[-1] for child in elem]
     assert tags == [
-        "ContainsBodyStrings", "ContainsSubjectStrings", "FromAddresses",
+        "ContainsBodyStrings", "ContainsRecipientStrings", "ContainsSenderStrings",
+        "ContainsSubjectStrings", "FromAddresses",
         "HasAttachments", "Importance", "SentToAddresses",
     ]
 
@@ -184,6 +187,36 @@ def test_parse_round_trips_through_build():
     assert parsed["conditions"] == {"from_addresses": ["a@x.com"], "has_attachments": True}
     assert parsed["actions"] == {"forward_to": ["b@x.com"], "delete": True}
     assert parsed["unsupported_fields"] is None
+
+
+def test_parse_owa_style_recipient_contains_rule():
+    """Regression: a real-world OWA-built rule ("contains these words in
+    the recipient address" -> move to folder, stop processing) used to
+    show up entirely conditionless with ContainsRecipientStrings flagged
+    unsupported -- verified live against an actual "BMW OUT" rule."""
+    xml = f"""<Rule xmlns="{TNS}">
+      <RuleId>owa1</RuleId>
+      <DisplayName>BMW OUT</DisplayName>
+      <Priority>11</Priority>
+      <IsEnabled>true</IsEnabled>
+      <Conditions>
+        <ContainsRecipientStrings><String>bmw.</String></ContainsRecipientStrings>
+      </Conditions>
+      <Actions>
+        <MoveToFolder><FolderId Id="RAW-BMW-FOLDER"/></MoveToFolder>
+        <StopProcessingRules/>
+      </Actions>
+    </Rule>"""
+    parsed = parse_rule_element(etree.fromstring(xml.encode()))
+    assert parsed["conditions"] == {"recipient_contains": ["bmw."]}
+    assert parsed["actions"] == {"move_to_folder": "RAW-BMW-FOLDER", "stop_processing": True}
+    assert parsed["unsupported_fields"] is None
+
+
+def test_build_sender_and_recipient_contains():
+    elem = build_conditions_element({"sender_contains": ["bmw."], "recipient_contains": ["mercedes."]})
+    assert elem.findtext(f"{{{TNS}}}ContainsSenderStrings/{{{TNS}}}String") == "bmw."
+    assert elem.findtext(f"{{{TNS}}}ContainsRecipientStrings/{{{TNS}}}String") == "mercedes."
 
 
 def test_unsupported_conditions_are_flagged_not_dropped_silently():

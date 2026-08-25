@@ -391,8 +391,10 @@ Create an Inbox rule (mail filter). Omitting every condition matches EVERY incom
 | `is_enabled` | boolean | no | (default `True`) |
 | `subject_contains` | array | no | Subject must contain ANY of these substrings. |
 | `body_contains` | array | no | Body must contain ANY of these substrings. |
-| `from_addresses` | array | no | Sender must be one of these addresses. |
-| `sent_to_addresses` | array | no | A To/Cc recipient must be one of these addresses. |
+| `sender_contains` | array | no | From address must contain ANY of these substrings (e.g. a domain fragment like 'bmw.'). This is what Outlook/OWA's simple rule editor builds for "contains these words in the sender's address" — prefer this over from_addresses unless you have exact, complete addresses. |
+| `recipient_contains` | array | no | A To/Cc address must contain ANY of these substrings. Same relationship to sent_to_addresses as sender_contains has to from_addresses — this is OWA's "contains these words in the recipient address" condition. |
+| `from_addresses` | array | no | Sender must be one of these EXACT addresses. |
+| `sent_to_addresses` | array | no | A To/Cc recipient must be one of these EXACT addresses. |
 | `has_attachments` | boolean | no | Message must have an attachment. |
 | `importance` | string | no | Message must be stamped with this importance. (one of: `low`, `normal`, `high`) |
 | `move_to_folder` | string | no | Move the message here (folder id, f:alias, or path). |
@@ -419,8 +421,10 @@ Replace an EXISTING Inbox rule wholesale (like create_rule, targeting rule_id fr
 | `is_enabled` | boolean | no | (default `True`) |
 | `subject_contains` | array | no | Subject must contain ANY of these substrings. |
 | `body_contains` | array | no | Body must contain ANY of these substrings. |
-| `from_addresses` | array | no | Sender must be one of these addresses. |
-| `sent_to_addresses` | array | no | A To/Cc recipient must be one of these addresses. |
+| `sender_contains` | array | no | From address must contain ANY of these substrings (e.g. a domain fragment like 'bmw.'). This is what Outlook/OWA's simple rule editor builds for "contains these words in the sender's address" — prefer this over from_addresses unless you have exact, complete addresses. |
+| `recipient_contains` | array | no | A To/Cc address must contain ANY of these substrings. Same relationship to sent_to_addresses as sender_contains has to from_addresses — this is OWA's "contains these words in the recipient address" condition. |
+| `from_addresses` | array | no | Sender must be one of these EXACT addresses. |
+| `sent_to_addresses` | array | no | A To/Cc recipient must be one of these EXACT addresses. |
 | `has_attachments` | boolean | no | Message must have an attachment. |
 | `importance` | string | no | Message must be stamped with this importance. (one of: `low`, `normal`, `high`) |
 | `move_to_folder` | string | no | Move the message here (folder id, f:alias, or path). |

@@ -90,6 +90,8 @@ _IMPORTANCE_FROM_XML = {v: k for k, v in _IMPORTANCE_TO_XML.items()}
 # Order matches the Conditions page's schema block exactly.
 _CONDITION_FIELDS: List[Tuple[str, str, str]] = [
     ("body_contains", "ContainsBodyStrings", "strings"),
+    ("recipient_contains", "ContainsRecipientStrings", "strings"),
+    ("sender_contains", "ContainsSenderStrings", "strings"),
     ("subject_contains", "ContainsSubjectStrings", "strings"),
     ("from_addresses", "FromAddresses", "addresses"),
     ("has_attachments", "HasAttachments", "flag"),
