@@ -8,7 +8,13 @@
   implements no OAuth; a 401 there reads to a spec-compliant MCP client
   as "OAuth required, no metadata available" — LibreChat surfaced this
   as a dead-end OAuth prompt on a plain header-auth (multi-user mode)
-  connection. 404 is the correct "not supported" signal.
+  connection. 404 is the correct "not supported" signal — this fixes the
+  "no metadata" case, but does NOT make `MCP_API_KEY` safe to combine
+  with a non-OAuth LibreChat MCP connection (confirmed live: LibreChat
+  still attempts OAuth on any 401 from the first `/mcp` touch, and
+  doesn't reliably recover). See README "HTTP transport" for the actual
+  guidance — omit `MCP_API_KEY` for that connection; the REST shim's
+  `x-api-key` is unaffected.
 
 ### Added
 - `v5`: multi-user mode (`EWS_MULTI_USER=true`, HTTP transport only) —

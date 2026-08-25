@@ -107,10 +107,18 @@ MCP_TRANSPORT=http MCP_PORT=8000 MCP_API_KEY=<long-random-string> ewsmcp
   header; OpenAPI at `/openapi.json`.
 - Health: `GET /livez`, `/readyz`, `/health`.
 - OAuth discovery paths (`/.well-known/oauth-*`, `/register`) always
-  404 — this server implements no OAuth, and `MCP_API_KEY` never gates
-  them, specifically so an OAuth-aware MCP client (LibreChat included)
-  sees "not supported" and falls back to its configured headers instead
-  of getting stuck offering an OAuth login that has nowhere to go.
+  404 — this server implements no OAuth. That fixes the "no metadata,
+  dead-end UI" case, but **don't set `MCP_API_KEY` on a connection a
+  client drives without an explicit OAuth config** (LibreChat's plain
+  `headers:`/`customUserVars` MCP connections, no `oauth:` block): such
+  clients treat *any* 401 from the very first `/mcp` touch — which
+  happens before your configured headers are attached — as "this needs
+  OAuth" and don't reliably fall back afterward, even once discovery
+  correctly reports "not supported" (confirmed live against LibreChat).
+  `x-api-key` on the REST shim (`/api/tools/<name>`) is unaffected —
+  that's a plain script/curl client, not doing OAuth auto-detection.
+  For an MCP connection, rely on the network boundary instead (no
+  `ports:` published — see multi-user mode below and Docker).
 
 Docker (containerized HTTP mode — note a container only sees the
 network of its host, not your workstation's VPN):
