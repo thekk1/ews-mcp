@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+- `v5`: multi-user mode (`EWS_MULTI_USER=true`, HTTP transport only) —
+  each request carries its own `X-EWS-Email`/`X-EWS-Password` headers
+  (e.g. LibreChat `customUserVars`) instead of a shared mailbox, resolved
+  to a bounded, idle-evicting cache of per-user Exchange sessions
+  (`ewsmcp/multiuser.py`). Cache mirror, audit log, alias DB and semantic
+  index are all disabled in this mode — see README "Multi-user mode" and
+  `v5/DESIGN.md` §Multi-user.
+
 ### Documentation
 - Repository-wide revamp: the root README is now a single front door
   (version guide, stdio-first quick start); `docs/README.md` maps all
