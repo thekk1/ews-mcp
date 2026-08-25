@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+- `v5`: OAuth discovery paths (`/.well-known/oauth-*`, `/register`) now
+  404 instead of inheriting the `MCP_API_KEY` gate's 401. This server
+  implements no OAuth; a 401 there reads to a spec-compliant MCP client
+  as "OAuth required, no metadata available" — LibreChat surfaced this
+  as a dead-end OAuth prompt on a plain header-auth (multi-user mode)
+  connection. 404 is the correct "not supported" signal.
+
 ### Added
 - `v5`: multi-user mode (`EWS_MULTI_USER=true`, HTTP transport only) —
   each request carries its own `X-EWS-Email`/`X-EWS-Password` headers

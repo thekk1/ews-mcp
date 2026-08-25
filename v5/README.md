@@ -106,6 +106,11 @@ MCP_TRANSPORT=http MCP_PORT=8000 MCP_API_KEY=<long-random-string> ewsmcp
 - Plain REST for scripts: `POST /api/tools/<name>` with an `x-api-key`
   header; OpenAPI at `/openapi.json`.
 - Health: `GET /livez`, `/readyz`, `/health`.
+- OAuth discovery paths (`/.well-known/oauth-*`, `/register`) always
+  404 — this server implements no OAuth, and `MCP_API_KEY` never gates
+  them, specifically so an OAuth-aware MCP client (LibreChat included)
+  sees "not supported" and falls back to its configured headers instead
+  of getting stuck offering an OAuth login that has nowhere to go.
 
 Docker (containerized HTTP mode — note a container only sees the
 network of its host, not your workstation's VPN):
