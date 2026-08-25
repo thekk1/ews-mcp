@@ -17,6 +17,18 @@
   `x-api-key` is unaffected.
 
 ### Added
+- `v5`: Inbox rules (mail filters) — `list_rules`/`create_rule`/
+  `update_rule`/`delete_rule`, 32 tools total (was 28). exchangelib
+  implements neither `GetInboxRules` nor `UpdateInboxRules`, so
+  `ewsmcp/gateway/rules.py` talks the raw EWS XML directly (schema
+  verified against Microsoft's own EWS reference), exposing a curated
+  condition/action subset (from/subject/body/attachments/importance →
+  move/copy/forward/redirect/delete/mark/stop). `forward_to`/
+  `redirect_to` re-check `SEND_ENABLED` themselves (same pattern as
+  `create_event`'s invitations) and always require two-phase confirm,
+  same as delete/permanent_delete — a rule is a standing auto-send
+  order, not a one-off. `update_rule` replaces a rule wholesale, matching
+  EWS's own `SetRuleOperation` semantics (not a partial patch).
 - `v5`: multi-user mode (`EWS_MULTI_USER=true`, HTTP transport only) —
   each request carries its own `X-EWS-Email`/`X-EWS-Password` headers
   (e.g. LibreChat `customUserVars`) instead of a shared mailbox, resolved
