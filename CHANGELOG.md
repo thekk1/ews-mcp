@@ -3,6 +3,19 @@
 ## [Unreleased]
 
 ### Added
+- `v5`: `get_attachment` and `get_message` now sniff `smime.p7m`
+  (`application/pkcs7-mime`) attachments and report `smime_type:
+  signed|enveloped` — that content-type/filename names BOTH opaque-signed
+  and encrypted S/MIME identically, so previously the calling model had
+  to guess from an empty body + the filename alone (and guessed wrong:
+  it assumed "encrypted" on a signed message). The real answer is the
+  DER `ContentInfo.contentType` OID at the start of the PKCS#7 structure
+  (RFC 5652) — read directly off the already-fetched attachment bytes,
+  no new dependency. `get_attachment(mode='auto')` now decodes `signed`
+  as text (the original MIME is embedded in cleartext inside the
+  SignedData wrapper; cert/signature bytes render as replacement chars)
+  and correctly leaves `enveloped` as `info` with a hint that the
+  content is genuinely unrecoverable without the recipient's private key.
 - `v5`: rules conditions now cover every predicate Outlook/OWA's own
   rule editor exposes — `sender_contains`/`recipient_contains`/
   `subject_or_body_contains`/`header_contains` (substring matches, as
