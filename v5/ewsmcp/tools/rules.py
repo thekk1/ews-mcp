@@ -2,7 +2,9 @@
 
 Built on EWS's GetInboxRules/UpdateInboxRules operations, which
 exchangelib does not implement — see gateway/rules.py for the low-level
-services and the curated condition/action subset they support.
+services. Conditions cover every predicate Outlook/OWA's own rule editor
+exposes (gateway/rules.py's module docstring has the full mapping and
+the four deliberately-excluded, no-OWA-UI predicates).
 
 Safety follows the create_event/update_event precedent in writes.py
 exactly: these tools are class "write" (draft tier) so a plain
@@ -18,9 +20,11 @@ own SetRuleOperation semantics) — it is deliberately not a partial patch.
 
 from typing import Any, Dict, List, Tuple
 
-from ..errors import ToolError
+from ..dates import parse_when
 from ..dto import envelope
+from ..errors import ToolError
 from ..gateway.rules import (
+    FLAGGED_FOR_ACTION_VALUES,
     GetInboxRules,
     UpdateInboxRules,
     build_create_operation,
@@ -31,18 +35,37 @@ from ..gateway.rules import (
 )
 from .base import Context, ToolSpec
 
-_CONDITION_KEYS = ("subject_contains", "body_contains", "sender_contains",
-                   "recipient_contains", "from_addresses", "sent_to_addresses",
-                   "has_attachments", "importance")
+_CONDITION_KEYS = (
+    "subject_contains", "body_contains", "sender_contains", "recipient_contains",
+    "subject_or_body_contains", "header_contains", "from_addresses", "sent_to_addresses",
+    "has_attachments", "importance", "sensitivity", "flagged_for_action",
+    "is_meeting_request", "is_meeting_response", "is_automatic_forward",
+    "is_automatic_reply", "is_encrypted", "is_signed", "is_read_receipt",
+    "is_ndr", "is_voicemail", "is_approval_request", "is_permission_controlled",
+    "sent_to_me", "sent_only_to_me", "sent_cc_me", "sent_to_or_cc_me", "not_sent_to_me",
+    "min_size_bytes", "max_size_bytes", "received_after", "received_before",
+)
 _ACTION_KEYS = ("move_to_folder", "copy_to_folder", "forward_to", "redirect_to",
                 "delete", "permanent_delete", "mark_as_read", "mark_importance",
                 "stop_processing")
+_DATE_CONDITION_KEYS = ("received_after", "received_before")
 
 
 def _split_rule_kwargs(kw: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     conditions = {k: kw[k] for k in _CONDITION_KEYS if kw.get(k) is not None}
     actions = {k: kw[k] for k in _ACTION_KEYS if kw.get(k) is not None}
     return conditions, actions
+
+
+def _normalize_conditions(ctx: Context, conditions: Dict[str, Any]) -> Dict[str, Any]:
+    """received_after/received_before arrive as the shared date grammar
+    ('today', '+7d', ISO date/datetime — DESIGN.md's dates.py) and must be
+    resolved to a concrete ISO datetime before hitting the wire."""
+    conditions = dict(conditions)
+    for key in _DATE_CONDITION_KEYS:
+        if conditions.get(key):
+            conditions[key] = parse_when(conditions[key], key, ctx.settings.ews_tz).isoformat()
+    return conditions
 
 
 def _check_rule_send_kill_switch(ctx: Context, actions: Dict[str, Any], tool_name: str) -> None:
@@ -92,6 +115,7 @@ async def _list_rules(ctx: Context) -> Dict[str, Any]:
 async def _create_rule(ctx: Context, *, display_name: str, priority: int = 1,
                        is_enabled: bool = True, **kw: Any) -> Dict[str, Any]:
     conditions, actions = _split_rule_kwargs(kw)
+    conditions = _normalize_conditions(ctx, conditions)
     _check_rule_send_kill_switch(ctx, actions, "create_rule")
     if not actions:
         raise ToolError("validation", "at least one action is required",
@@ -127,6 +151,7 @@ async def _update_rule(ctx: Context, *, rule_id: str, display_name: str,
                        priority: int = 1, is_enabled: bool = True,
                        **kw: Any) -> Dict[str, Any]:
     conditions, actions = _split_rule_kwargs(kw)
+    conditions = _normalize_conditions(ctx, conditions)
     _check_rule_send_kill_switch(ctx, actions, "update_rule")
     if not actions:
         raise ToolError("validation", "at least one action is required",
@@ -170,7 +195,12 @@ def _obj(props: Dict[str, Any], required: List[str] = None) -> Dict[str, Any]:
 _STR = {"type": "string"}
 _EMAILS = {"type": "array", "items": {"type": "string"}}
 _STRINGS = {"type": "array", "items": {"type": "string"}}
+_BOOL = {"type": "boolean"}
 _IMPORTANCE_ENUM = {"type": "string", "enum": ["low", "normal", "high"]}
+_SENSITIVITY_ENUM = {"type": "string", "enum": ["normal", "personal", "private", "confidential"]}
+_FLAGGED_FOR_ACTION_ENUM = {"type": "string", "enum": FLAGGED_FOR_ACTION_VALUES}
+_SIZE_INT = {"type": "integer", "minimum": 0}
+_DATE_STR = {"type": "string", "description": "Date grammar: 'today', '+Nd', YYYY-MM-DD, or an ISO datetime."}
 
 
 def _condition_props() -> Dict[str, Any]:
@@ -188,10 +218,34 @@ def _condition_props() -> Dict[str, Any]:
             "relationship to sent_to_addresses as sender_contains has to "
             "from_addresses — this is OWA's \"contains these words in the "
             "recipient address\" condition.")},
+        "subject_or_body_contains": {**_STRINGS, "description": "Subject OR body must contain ANY of these substrings."},
+        "header_contains": {**_STRINGS, "description": "A message header must contain ANY of these substrings."},
         "from_addresses": {**_EMAILS, "description": "Sender must be one of these EXACT addresses."},
         "sent_to_addresses": {**_EMAILS, "description": "A To/Cc recipient must be one of these EXACT addresses."},
-        "has_attachments": {"type": "boolean", "description": "Message must have an attachment."},
+        "has_attachments": {**_BOOL, "description": "Message must have an attachment."},
         "importance": {**_IMPORTANCE_ENUM, "description": "Message must be stamped with this importance."},
+        "sensitivity": {**_SENSITIVITY_ENUM, "description": "Message must be stamped with this sensitivity."},
+        "flagged_for_action": {**_FLAGGED_FOR_ACTION_ENUM, "description": "Message must carry this flag-for-action."},
+        "is_meeting_request": {**_BOOL, "description": "Message must be a meeting request."},
+        "is_meeting_response": {**_BOOL, "description": "Message must be a meeting response (accept/decline/tentative)."},
+        "is_automatic_forward": {**_BOOL, "description": "Message must be an automatic forward."},
+        "is_automatic_reply": {**_BOOL, "description": "Message must be an automatic reply (out-of-office etc.)."},
+        "is_encrypted": {**_BOOL, "description": "Message must be S/MIME encrypted."},
+        "is_signed": {**_BOOL, "description": "Message must be S/MIME signed."},
+        "is_read_receipt": {**_BOOL, "description": "Message must be a read receipt."},
+        "is_ndr": {**_BOOL, "description": "Message must be a non-delivery report (bounce)."},
+        "is_voicemail": {**_BOOL, "description": "Message must be a voicemail."},
+        "is_approval_request": {**_BOOL, "description": "Message must be an approval request."},
+        "is_permission_controlled": {**_BOOL, "description": "Message must be rights-management (IRM) protected."},
+        "sent_to_me": {**_BOOL, "description": "The mailbox owner must be a To recipient (OWA: \"My name is in the To box\")."},
+        "sent_only_to_me": {**_BOOL, "description": "The mailbox owner must be the ONLY To recipient."},
+        "sent_cc_me": {**_BOOL, "description": "The mailbox owner must be a Cc recipient."},
+        "sent_to_or_cc_me": {**_BOOL, "description": "The mailbox owner must be a To OR Cc recipient."},
+        "not_sent_to_me": {**_BOOL, "description": "The mailbox owner must NOT be a To recipient."},
+        "min_size_bytes": {**_SIZE_INT, "description": "Message size must be at least this many bytes."},
+        "max_size_bytes": {**_SIZE_INT, "description": "Message size must be at most this many bytes."},
+        "received_after": {**_DATE_STR, "description": "Message must have been received on/after this date. " + _DATE_STR["description"]},
+        "received_before": {**_DATE_STR, "description": "Message must have been received on/before this date. " + _DATE_STR["description"]},
     }
 
 

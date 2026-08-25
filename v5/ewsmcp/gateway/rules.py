@@ -7,13 +7,16 @@ GetUserOofSettings/SetUserOofSettings (exchangelib/services/) as the
 closest shipped precedent for an account-level get/set operation.
 
 Schema verified against Microsoft's own EWS reference (GetInboxRules,
-UpdateInboxRules, Conditions, Actions, FromAddresses pages) — this is a
-CURATED SUBSET of the full RulePredicates (30 possible conditions) /
-RuleActionsType (13 actions) schema: the common "move/forward/delete
-based on sender/subject" cases, not a raw passthrough (DESIGN.md's
-token-economy / curated-surface philosophy). ``unsupported_fields`` on a
-parsed rule flags when a rule uses conditions/actions outside this
-subset, so a complex existing rule is never silently misrepresented.
+UpdateInboxRules, Conditions, Actions, FromAddresses, FlaggedForAction,
+Sensitivity, WithinSizeRange, WithinDateRange pages). Conditions cover
+every predicate Outlook/OWA's own rule editor exposes — everything under
+its "Contains these words / Was sent or received / My name is / Is
+flagged with / Is / Size / Received" menus — except the four that
+aren't in that menu at all (``Categories``, ``ItemClasses``,
+``MessageClassifications``, ``FromConnectedAccounts``: enterprise/
+admin-only predicates with no OWA UI). ``unsupported_fields`` on a
+parsed rule flags those four if an existing rule uses one, so it's never
+silently misrepresented.
 
 Element order within Conditions/Actions follows the EWS schema's own
 sequence (verified against the MSDN Conditions/Actions pages) — EWS
@@ -82,38 +85,82 @@ class UpdateInboxRules(EWSAccountService):
         return payload
 
 
-# --- curated condition/action schema (key, XML tag, kind), IN EWS ORDER -----
+# --- condition/action schema (key, XML tag, kind, enum-map), IN EWS ORDER ---
+#
+# kind: flag (presence marker) | strings (<String> list) | addresses
+# (<Address><EmailAddress> list) | value (single text, mapped through the
+# 4th tuple element) | raw_text (single text, used verbatim — EWS's own
+# enum spelling, e.g. FlaggedForAction's "DoNotForward"/"ReplyToAll") |
+# folder (actions only, resolved through the resolve_folder callback).
+# WithinDateRange/WithinSizeRange combine two fields into one element and
+# so aren't representable as a single (key, tag) row — see
+# build_conditions_element/parse_conditions_element below.
 
 _IMPORTANCE_TO_XML = {"low": "Low", "normal": "Normal", "high": "High"}
-_IMPORTANCE_FROM_XML = {v: k for k, v in _IMPORTANCE_TO_XML.items()}
+_SENSITIVITY_TO_XML = {"normal": "Normal", "personal": "Personal",
+                       "private": "Private", "confidential": "Confidential"}
 
-# Order matches the Conditions page's schema block exactly.
-_CONDITION_FIELDS: List[Tuple[str, str, str]] = [
-    ("body_contains", "ContainsBodyStrings", "strings"),
-    ("recipient_contains", "ContainsRecipientStrings", "strings"),
-    ("sender_contains", "ContainsSenderStrings", "strings"),
-    ("subject_contains", "ContainsSubjectStrings", "strings"),
-    ("from_addresses", "FromAddresses", "addresses"),
-    ("has_attachments", "HasAttachments", "flag"),
-    ("importance", "Importance", "value"),
-    ("sent_to_addresses", "SentToAddresses", "addresses"),
+# The exact (case-sensitive) EWS enum spelling — exposed as-is in the tool
+# schema rather than invented snake_case aliases (FYI/ReplyToAll/
+# DoNotForward don't map cleanly to one convention).
+FLAGGED_FOR_ACTION_VALUES = [
+    "Any", "Call", "DoNotForward", "FollowUp", "FYI", "Forward",
+    "NoResponseNecessary", "Read", "Reply", "ReplyToAll", "Review",
+]
+
+# Order matches the Conditions page's schema block exactly (minus
+# Categories/ItemClasses/MessageClassifications/FromConnectedAccounts —
+# not in OWA's UI; WithinDateRange/WithinSizeRange are last, handled
+# outside this list).
+_CONDITION_FIELDS: List[Tuple[str, str, str, Optional[Dict[str, str]]]] = [
+    ("body_contains", "ContainsBodyStrings", "strings", None),
+    ("header_contains", "ContainsHeaderStrings", "strings", None),
+    ("recipient_contains", "ContainsRecipientStrings", "strings", None),
+    ("sender_contains", "ContainsSenderStrings", "strings", None),
+    ("subject_or_body_contains", "ContainsSubjectOrBodyStrings", "strings", None),
+    ("subject_contains", "ContainsSubjectStrings", "strings", None),
+    ("flagged_for_action", "FlaggedForAction", "raw_text", None),
+    ("from_addresses", "FromAddresses", "addresses", None),
+    ("has_attachments", "HasAttachments", "flag", None),
+    ("importance", "Importance", "value", _IMPORTANCE_TO_XML),
+    ("is_approval_request", "IsApprovalRequest", "flag", None),
+    ("is_automatic_forward", "IsAutomaticForward", "flag", None),
+    ("is_automatic_reply", "IsAutomaticReply", "flag", None),
+    ("is_encrypted", "IsEncrypted", "flag", None),
+    ("is_meeting_request", "IsMeetingRequest", "flag", None),
+    ("is_meeting_response", "IsMeetingResponse", "flag", None),
+    ("is_ndr", "IsNDR", "flag", None),
+    ("is_permission_controlled", "IsPermissionControlled", "flag", None),
+    ("is_read_receipt", "IsReadReceipt", "flag", None),
+    ("is_signed", "IsSigned", "flag", None),
+    ("is_voicemail", "IsVoicemail", "flag", None),
+    ("not_sent_to_me", "NotSentToMe", "flag", None),
+    ("sent_cc_me", "SentCcMe", "flag", None),
+    ("sent_only_to_me", "SentOnlyToMe", "flag", None),
+    ("sent_to_addresses", "SentToAddresses", "addresses", None),
+    ("sent_to_me", "SentToMe", "flag", None),
+    ("sent_to_or_cc_me", "SentToOrCcMe", "flag", None),
+    ("sensitivity", "Sensitivity", "value", _SENSITIVITY_TO_XML),
 ]
 
 # Order matches the Actions page's schema block exactly.
-_ACTION_FIELDS: List[Tuple[str, str, str]] = [
-    ("copy_to_folder", "CopyToFolder", "folder"),
-    ("delete", "Delete", "flag"),
-    ("forward_to", "ForwardToRecipients", "addresses"),
-    ("mark_importance", "MarkImportance", "value"),
-    ("mark_as_read", "MarkAsRead", "flag"),
-    ("move_to_folder", "MoveToFolder", "folder"),
-    ("permanent_delete", "PermanentDelete", "flag"),
-    ("redirect_to", "RedirectToRecipients", "addresses"),
-    ("stop_processing", "StopProcessingRules", "flag"),
+_ACTION_FIELDS: List[Tuple[str, str, str, Optional[Dict[str, str]]]] = [
+    ("copy_to_folder", "CopyToFolder", "folder", None),
+    ("delete", "Delete", "flag", None),
+    ("forward_to", "ForwardToRecipients", "addresses", None),
+    ("mark_importance", "MarkImportance", "value", _IMPORTANCE_TO_XML),
+    ("mark_as_read", "MarkAsRead", "flag", None),
+    ("move_to_folder", "MoveToFolder", "folder", None),
+    ("permanent_delete", "PermanentDelete", "flag", None),
+    ("redirect_to", "RedirectToRecipients", "addresses", None),
+    ("stop_processing", "StopProcessingRules", "flag", None),
 ]
 
-_KNOWN_CONDITION_TAGS = {tag for _, tag, _ in _CONDITION_FIELDS}
-_KNOWN_ACTION_TAGS = {tag for _, tag, _ in _ACTION_FIELDS}
+# WithinDateRange/WithinSizeRange are last in the Conditions schema order.
+_KNOWN_CONDITION_TAGS = {tag for _, tag, _, _ in _CONDITION_FIELDS} | {
+    "WithinDateRange", "WithinSizeRange",
+}
+_KNOWN_ACTION_TAGS = {tag for _, tag, _, _ in _ACTION_FIELDS}
 
 
 # --- building (dict -> XML) --------------------------------------------------
@@ -143,11 +190,29 @@ def _folder_id_element(folder: Any):
     return create_element("t:FolderId", attrs=attrs)
 
 
-def _build_predicate_block(tag: str, fields: List[Tuple[str, str, str]],
+def _build_size_range_element(min_bytes: Optional[int], max_bytes: Optional[int]):
+    elem = create_element("t:WithinSizeRange")
+    if min_bytes is not None:
+        add_xml_child(elem, "t:MinimumSize", int(min_bytes))
+    if max_bytes is not None:
+        add_xml_child(elem, "t:MaximumSize", int(max_bytes))
+    return elem
+
+
+def _build_date_range_element(start_iso: Optional[str], end_iso: Optional[str]):
+    elem = create_element("t:WithinDateRange")
+    if start_iso:
+        add_xml_child(elem, "t:StartDateTime", start_iso)
+    if end_iso:
+        add_xml_child(elem, "t:EndDateTime", end_iso)
+    return elem
+
+
+def _build_predicate_block(tag: str, fields: List[Tuple[str, str, str, Optional[Dict[str, str]]]],
                            values: Dict[str, Any],
                            resolve_folder: Optional[Callable[[str], Any]]):
     elem = create_element(f"t:{tag}")
-    for key, xml_tag, kind in fields:
+    for key, xml_tag, kind, enum_map in fields:
         value = values.get(key)
         if not value:
             continue
@@ -155,7 +220,11 @@ def _build_predicate_block(tag: str, fields: List[Tuple[str, str, str]],
             elem.append(create_element(f"t:{xml_tag}"))
         elif kind == "value":
             sub = create_element(f"t:{xml_tag}")
-            sub.text = _IMPORTANCE_TO_XML.get(value, str(value))
+            sub.text = (enum_map or {}).get(value, str(value))
+            elem.append(sub)
+        elif kind == "raw_text":
+            sub = create_element(f"t:{xml_tag}")
+            sub.text = str(value)
             elem.append(sub)
         elif kind == "strings":
             elem.append(_string_list_element(xml_tag, value))
@@ -171,7 +240,15 @@ def _build_predicate_block(tag: str, fields: List[Tuple[str, str, str]],
 
 
 def build_conditions_element(conditions: Dict[str, Any]):
-    return _build_predicate_block("Conditions", _CONDITION_FIELDS, conditions or {}, None)
+    conditions = conditions or {}
+    elem = _build_predicate_block("Conditions", _CONDITION_FIELDS, conditions, None)
+    start_iso, end_iso = conditions.get("received_after"), conditions.get("received_before")
+    if start_iso or end_iso:
+        elem.append(_build_date_range_element(start_iso, end_iso))
+    min_b, max_b = conditions.get("min_size_bytes"), conditions.get("max_size_bytes")
+    if min_b is not None or max_b is not None:
+        elem.append(_build_size_range_element(min_b, max_b))
+    return elem
 
 
 def build_actions_element(actions: Dict[str, Any], resolve_folder: Callable[[str], Any]):
@@ -213,20 +290,23 @@ def build_delete_operation(rule_id: str):
 # --- parsing (XML -> dict) --------------------------------------------------
 
 
-def _parse_predicate_block(block_elem: Any, fields: List[Tuple[str, str, str]],
+def _parse_predicate_block(block_elem: Any, fields: List[Tuple[str, str, str, Optional[Dict[str, str]]]],
                            known_tags: set) -> Tuple[Dict[str, Any], List[str]]:
     result: Dict[str, Any] = {}
     unsupported: List[str] = []
     if block_elem is None:
         return result, unsupported
-    for key, xml_tag, kind in fields:
+    for key, xml_tag, kind, enum_map in fields:
         child = block_elem.find(f"{{{TNS}}}{xml_tag}")
         if child is None:
             continue
         if kind == "flag":
             result[key] = True
         elif kind == "value":
-            result[key] = _IMPORTANCE_FROM_XML.get(child.text, (child.text or "").lower())
+            from_map = {v: k for k, v in (enum_map or {}).items()}
+            result[key] = from_map.get(child.text, (child.text or "").lower())
+        elif kind == "raw_text":
+            result[key] = child.text
         elif kind == "strings":
             result[key] = [s.text for s in child.findall(f"{{{TNS}}}String") if s.text]
         elif kind == "addresses":
@@ -242,6 +322,40 @@ def _parse_predicate_block(block_elem: Any, fields: List[Tuple[str, str, str]],
     return result, unsupported
 
 
+def _parse_size_range(elem: Optional[Any]) -> Dict[str, Any]:
+    if elem is None:
+        return {}
+    result: Dict[str, Any] = {}
+    min_el = elem.find(f"{{{TNS}}}MinimumSize")
+    max_el = elem.find(f"{{{TNS}}}MaximumSize")
+    if min_el is not None and min_el.text:
+        result["min_size_bytes"] = int(min_el.text)
+    if max_el is not None and max_el.text:
+        result["max_size_bytes"] = int(max_el.text)
+    return result
+
+
+def _parse_date_range(elem: Optional[Any]) -> Dict[str, Any]:
+    if elem is None:
+        return {}
+    result: Dict[str, Any] = {}
+    start_el = elem.find(f"{{{TNS}}}StartDateTime")
+    end_el = elem.find(f"{{{TNS}}}EndDateTime")
+    if start_el is not None and start_el.text:
+        result["received_after"] = start_el.text
+    if end_el is not None and end_el.text:
+        result["received_before"] = end_el.text
+    return result
+
+
+def parse_conditions_element(elem: Optional[Any]) -> Tuple[Dict[str, Any], List[str]]:
+    result, unsupported = _parse_predicate_block(elem, _CONDITION_FIELDS, _KNOWN_CONDITION_TAGS)
+    if elem is not None:
+        result.update(_parse_date_range(elem.find(f"{{{TNS}}}WithinDateRange")))
+        result.update(_parse_size_range(elem.find(f"{{{TNS}}}WithinSizeRange")))
+    return result, unsupported
+
+
 def parse_rule_element(elem: Any) -> Dict[str, Any]:
     """``elem`` is a raw ``<t:Rule>`` element from GetInboxRules. Folder ids
     in the result (``move_to_folder``/``copy_to_folder``) are RAW EWS ids —
@@ -252,8 +366,7 @@ def parse_rule_element(elem: Any) -> Dict[str, Any]:
         child = elem.find(f"{{{TNS}}}{tag}")
         return child.text if child is not None else None
 
-    conditions, cond_unsupported = _parse_predicate_block(
-        elem.find(f"{{{TNS}}}Conditions"), _CONDITION_FIELDS, _KNOWN_CONDITION_TAGS)
+    conditions, cond_unsupported = parse_conditions_element(elem.find(f"{{{TNS}}}Conditions"))
     actions, act_unsupported = _parse_predicate_block(
         elem.find(f"{{{TNS}}}Actions"), _ACTION_FIELDS, _KNOWN_ACTION_TAGS)
     unsupported = cond_unsupported + act_unsupported

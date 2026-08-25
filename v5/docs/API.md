@@ -393,10 +393,34 @@ Create an Inbox rule (mail filter). Omitting every condition matches EVERY incom
 | `body_contains` | array | no | Body must contain ANY of these substrings. |
 | `sender_contains` | array | no | From address must contain ANY of these substrings (e.g. a domain fragment like 'bmw.'). This is what Outlook/OWA's simple rule editor builds for "contains these words in the sender's address" — prefer this over from_addresses unless you have exact, complete addresses. |
 | `recipient_contains` | array | no | A To/Cc address must contain ANY of these substrings. Same relationship to sent_to_addresses as sender_contains has to from_addresses — this is OWA's "contains these words in the recipient address" condition. |
+| `subject_or_body_contains` | array | no | Subject OR body must contain ANY of these substrings. |
+| `header_contains` | array | no | A message header must contain ANY of these substrings. |
 | `from_addresses` | array | no | Sender must be one of these EXACT addresses. |
 | `sent_to_addresses` | array | no | A To/Cc recipient must be one of these EXACT addresses. |
 | `has_attachments` | boolean | no | Message must have an attachment. |
 | `importance` | string | no | Message must be stamped with this importance. (one of: `low`, `normal`, `high`) |
+| `sensitivity` | string | no | Message must be stamped with this sensitivity. (one of: `normal`, `personal`, `private`, `confidential`) |
+| `flagged_for_action` | string | no | Message must carry this flag-for-action. (one of: `Any`, `Call`, `DoNotForward`, `FollowUp`, `FYI`, `Forward`, `NoResponseNecessary`, `Read`, `Reply`, `ReplyToAll`, `Review`) |
+| `is_meeting_request` | boolean | no | Message must be a meeting request. |
+| `is_meeting_response` | boolean | no | Message must be a meeting response (accept/decline/tentative). |
+| `is_automatic_forward` | boolean | no | Message must be an automatic forward. |
+| `is_automatic_reply` | boolean | no | Message must be an automatic reply (out-of-office etc.). |
+| `is_encrypted` | boolean | no | Message must be S/MIME encrypted. |
+| `is_signed` | boolean | no | Message must be S/MIME signed. |
+| `is_read_receipt` | boolean | no | Message must be a read receipt. |
+| `is_ndr` | boolean | no | Message must be a non-delivery report (bounce). |
+| `is_voicemail` | boolean | no | Message must be a voicemail. |
+| `is_approval_request` | boolean | no | Message must be an approval request. |
+| `is_permission_controlled` | boolean | no | Message must be rights-management (IRM) protected. |
+| `sent_to_me` | boolean | no | The mailbox owner must be a To recipient (OWA: "My name is in the To box"). |
+| `sent_only_to_me` | boolean | no | The mailbox owner must be the ONLY To recipient. |
+| `sent_cc_me` | boolean | no | The mailbox owner must be a Cc recipient. |
+| `sent_to_or_cc_me` | boolean | no | The mailbox owner must be a To OR Cc recipient. |
+| `not_sent_to_me` | boolean | no | The mailbox owner must NOT be a To recipient. |
+| `min_size_bytes` | integer | no | Message size must be at least this many bytes. |
+| `max_size_bytes` | integer | no | Message size must be at most this many bytes. |
+| `received_after` | string | no | Message must have been received on/after this date. Date grammar: 'today', '+Nd', YYYY-MM-DD, or an ISO datetime. |
+| `received_before` | string | no | Message must have been received on/before this date. Date grammar: 'today', '+Nd', YYYY-MM-DD, or an ISO datetime. |
 | `move_to_folder` | string | no | Move the message here (folder id, f:alias, or path). |
 | `copy_to_folder` | string | no | ALSO copy the message here. |
 | `forward_to` | array | no | Forward to these addresses. Leaves the mailbox on every future match — needs SEND_ENABLED=true and two-phase confirm. |
@@ -423,10 +447,34 @@ Replace an EXISTING Inbox rule wholesale (like create_rule, targeting rule_id fr
 | `body_contains` | array | no | Body must contain ANY of these substrings. |
 | `sender_contains` | array | no | From address must contain ANY of these substrings (e.g. a domain fragment like 'bmw.'). This is what Outlook/OWA's simple rule editor builds for "contains these words in the sender's address" — prefer this over from_addresses unless you have exact, complete addresses. |
 | `recipient_contains` | array | no | A To/Cc address must contain ANY of these substrings. Same relationship to sent_to_addresses as sender_contains has to from_addresses — this is OWA's "contains these words in the recipient address" condition. |
+| `subject_or_body_contains` | array | no | Subject OR body must contain ANY of these substrings. |
+| `header_contains` | array | no | A message header must contain ANY of these substrings. |
 | `from_addresses` | array | no | Sender must be one of these EXACT addresses. |
 | `sent_to_addresses` | array | no | A To/Cc recipient must be one of these EXACT addresses. |
 | `has_attachments` | boolean | no | Message must have an attachment. |
 | `importance` | string | no | Message must be stamped with this importance. (one of: `low`, `normal`, `high`) |
+| `sensitivity` | string | no | Message must be stamped with this sensitivity. (one of: `normal`, `personal`, `private`, `confidential`) |
+| `flagged_for_action` | string | no | Message must carry this flag-for-action. (one of: `Any`, `Call`, `DoNotForward`, `FollowUp`, `FYI`, `Forward`, `NoResponseNecessary`, `Read`, `Reply`, `ReplyToAll`, `Review`) |
+| `is_meeting_request` | boolean | no | Message must be a meeting request. |
+| `is_meeting_response` | boolean | no | Message must be a meeting response (accept/decline/tentative). |
+| `is_automatic_forward` | boolean | no | Message must be an automatic forward. |
+| `is_automatic_reply` | boolean | no | Message must be an automatic reply (out-of-office etc.). |
+| `is_encrypted` | boolean | no | Message must be S/MIME encrypted. |
+| `is_signed` | boolean | no | Message must be S/MIME signed. |
+| `is_read_receipt` | boolean | no | Message must be a read receipt. |
+| `is_ndr` | boolean | no | Message must be a non-delivery report (bounce). |
+| `is_voicemail` | boolean | no | Message must be a voicemail. |
+| `is_approval_request` | boolean | no | Message must be an approval request. |
+| `is_permission_controlled` | boolean | no | Message must be rights-management (IRM) protected. |
+| `sent_to_me` | boolean | no | The mailbox owner must be a To recipient (OWA: "My name is in the To box"). |
+| `sent_only_to_me` | boolean | no | The mailbox owner must be the ONLY To recipient. |
+| `sent_cc_me` | boolean | no | The mailbox owner must be a Cc recipient. |
+| `sent_to_or_cc_me` | boolean | no | The mailbox owner must be a To OR Cc recipient. |
+| `not_sent_to_me` | boolean | no | The mailbox owner must NOT be a To recipient. |
+| `min_size_bytes` | integer | no | Message size must be at least this many bytes. |
+| `max_size_bytes` | integer | no | Message size must be at most this many bytes. |
+| `received_after` | string | no | Message must have been received on/after this date. Date grammar: 'today', '+Nd', YYYY-MM-DD, or an ISO datetime. |
+| `received_before` | string | no | Message must have been received on/before this date. Date grammar: 'today', '+Nd', YYYY-MM-DD, or an ISO datetime. |
 | `move_to_folder` | string | no | Move the message here (folder id, f:alias, or path). |
 | `copy_to_folder` | string | no | ALSO copy the message here. |
 | `forward_to` | array | no | Forward to these addresses. Leaves the mailbox on every future match — needs SEND_ENABLED=true and two-phase confirm. |

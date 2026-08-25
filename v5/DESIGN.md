@@ -45,10 +45,16 @@ Five packs (see the generated table in `docs/API.md`):
 - **rules** (4): `list_rules`, `create_rule`, `update_rule`, `delete_rule`
   — Inbox rules (mail filters) via EWS's GetInboxRules/UpdateInboxRules,
   which exchangelib does not implement (`gateway/rules.py` talks raw EWS
-  XML). A curated condition/action subset, not the full ~30-predicate
-  schema; `forward_to`/`redirect_to` re-check `SEND_ENABLED` themselves
-  (same exception as `create_event`'s invitations, §Safety) since a rule
-  is a standing auto-send order, not a one-off.
+  XML). Conditions cover every predicate Outlook/OWA's own rule editor
+  exposes — everything under its "Contains these words / Was sent or
+  received / My name is / Is flagged with / Is / Size / Received" menus
+  — except the four that have no OWA UI at all (`Categories`,
+  `ItemClasses`, `MessageClassifications`, `FromConnectedAccounts`);
+  `unsupported_fields` on a listed rule flags those four if present, so
+  a rule using one is never silently misrepresented. `forward_to`/
+  `redirect_to` re-check `SEND_ENABLED` themselves (same exception as
+  `create_event`'s invitations, §Safety) since a rule is a standing
+  auto-send order, not a one-off.
 - **semantic** (+1, only when enabled): `find_similar`.
 
 Every list-shaped result ships exactly the canonical envelope

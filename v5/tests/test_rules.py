@@ -203,6 +203,61 @@ def test_create_rule_forward_to_respects_recipient_denylist(tmp_path):
     assert FakeUpdateInboxRules.calls == []
 
 
+def test_create_rule_owa_style_recipient_contains(tmp_path):
+    """End-to-end regression for the real "BMW OUT" rule shape: contains
+    a word in the recipient address -> move to folder, stop processing."""
+    account = make_account()
+    ctx = make_ctx(tmp_path, account, ews_capability_tier="draft", send_enabled=False)
+    ctx.gateway.folders["BMW"] = SimpleNamespace(id="RAW-BMW-FOLDER", changekey=None)
+    FakeGetInboxRules.elements = [etree.fromstring(_rule_xml(
+        "RAW-BMW-11", "BMW OUT", priority=11,
+        actions_xml='<MoveToFolder><FolderId Id="RAW-BMW-FOLDER"/></MoveToFolder><StopProcessingRules/>',
+    ).encode())]
+
+    res = call(ctx, "create_rule", {
+        "display_name": "BMW OUT", "priority": 11,
+        "recipient_contains": ["bmw."], "move_to_folder": "BMW", "stop_processing": True,
+    })
+
+    assert res["ok"] is True
+    assert "unsupported_fields" not in res
+    op = FakeUpdateInboxRules.calls[0]
+    rule_elem = op[0]
+    cond = rule_elem.find(f"{{{TNS}}}Conditions/{{{TNS}}}ContainsRecipientStrings/{{{TNS}}}String")
+    assert cond.text == "bmw."
+
+
+def test_create_rule_date_grammar_resolved_to_iso(tmp_path):
+    ctx = full_ctx(tmp_path, make_account())
+    FakeGetInboxRules.elements = [etree.fromstring(_rule_xml("RAW-D1", "Recent").encode())]
+
+    res = call(ctx, "create_rule", {
+        "display_name": "Recent", "received_after": "today", "mark_as_read": True,
+    })
+
+    assert res["ok"] is True
+    op = FakeUpdateInboxRules.calls[0]
+    start = op[0].find(f"{{{TNS}}}Conditions/{{{TNS}}}WithinDateRange/{{{TNS}}}StartDateTime")
+    assert start is not None and "T00:00:00" in start.text
+
+
+def test_create_rule_boolean_and_enum_conditions_build_correctly(tmp_path):
+    ctx = full_ctx(tmp_path, make_account())
+    FakeGetInboxRules.elements = [etree.fromstring(_rule_xml("RAW-D2", "Flagged").encode())]
+
+    res = call(ctx, "create_rule", {
+        "display_name": "Flagged", "sent_to_me": True,
+        "sensitivity": "confidential", "flagged_for_action": "FollowUp",
+        "mark_as_read": True,
+    })
+
+    assert res["ok"] is True
+    conditions = FakeUpdateInboxRules.calls[0][0].find(f"{{{TNS}}}Conditions")
+    assert conditions.find(f"{{{TNS}}}SentToMe") is not None
+    assert conditions.findtext(f"{{{TNS}}}Sensitivity") == "Confidential"
+    assert conditions.findtext(f"{{{TNS}}}FlaggedForAction") == "FollowUp"
+
+
 # --- update_rule -----------------------------------------------------------------
 
 

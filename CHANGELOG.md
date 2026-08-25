@@ -3,15 +3,28 @@
 ## [Unreleased]
 
 ### Added
-- `v5`: rules conditions `sender_contains`/`recipient_contains`
-  (`ContainsSenderStrings`/`ContainsRecipientStrings`) — the substring
-  match Outlook/OWA's own simple rule editor builds ("contains these
-  words in the sender's/recipient's address"), distinct from the exact-
-  address `from_addresses`/`sent_to_addresses` already supported. Found
-  live: a real "BMW OUT" rule (contains "bmw." in the recipient address)
-  showed up conditionless with `ContainsRecipientStrings` flagged
-  unsupported — this was the dominant real-world rule pattern, not an
-  edge case.
+- `v5`: rules conditions now cover every predicate Outlook/OWA's own
+  rule editor exposes — `sender_contains`/`recipient_contains`/
+  `subject_or_body_contains`/`header_contains` (substring matches, as
+  opposed to the exact-address `from_addresses`/`sent_to_addresses`),
+  `sensitivity`, `flagged_for_action`, the `is_*` message-type flags
+  (meeting request/response, automatic forward/reply, encrypted, signed,
+  read receipt, NDR, voicemail, approval request, permission-controlled),
+  the `sent_to_me`/`sent_only_to_me`/`sent_cc_me`/`sent_to_or_cc_me`/
+  `not_sent_to_me` "my name is" group, `min_size_bytes`/`max_size_bytes`
+  (`WithinSizeRange`), and `received_after`/`received_before`
+  (`WithinDateRange`, sharing the one date grammar every other tool
+  uses). Excluded on purpose: `Categories`/`ItemClasses`/
+  `MessageClassifications`/`FromConnectedAccounts` have no OWA UI at
+  all — `unsupported_fields` flags a rule using one of those instead of
+  silently misrepresenting it.
+
+  Found live: a real "BMW OUT" rule (contains "bmw." in the recipient
+  address) showed up conditionless with `ContainsRecipientStrings`
+  flagged unsupported — that substring-match pattern is what OWA's
+  simple UI actually builds, so it was the dominant real-world case,
+  not an edge one; the user then asked for full parity with everything
+  OWA's condition picker offers.
 
 ### Fixed
 - `v5`: OAuth discovery paths (`/.well-known/oauth-*`, `/register`) now

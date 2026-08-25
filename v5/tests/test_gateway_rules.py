@@ -12,6 +12,7 @@ from ewsmcp.gateway.rules import (
     build_delete_operation,
     build_rule_element,
     build_set_operation,
+    parse_conditions_element,
     parse_rule_element,
 )
 
@@ -219,14 +220,75 @@ def test_build_sender_and_recipient_contains():
     assert elem.findtext(f"{{{TNS}}}ContainsRecipientStrings/{{{TNS}}}String") == "mercedes."
 
 
+def test_build_and_parse_boolean_and_enum_conditions():
+    elem = build_conditions_element({
+        "is_meeting_request": True,
+        "sent_to_me": True,
+        "sensitivity": "confidential",
+        "flagged_for_action": "FollowUp",
+    })
+    assert elem.find(f"{{{TNS}}}IsMeetingRequest") is not None
+    assert elem.find(f"{{{TNS}}}SentToMe") is not None
+    assert elem.findtext(f"{{{TNS}}}Sensitivity") == "Confidential"
+    assert elem.findtext(f"{{{TNS}}}FlaggedForAction") == "FollowUp"
+
+    parsed, unsupported = parse_conditions_element(elem)
+    assert parsed == {
+        "is_meeting_request": True, "sent_to_me": True,
+        "sensitivity": "confidential", "flagged_for_action": "FollowUp",
+    }
+    assert unsupported == []
+
+
+def test_build_and_parse_size_range_both_bounds():
+    elem = build_conditions_element({"min_size_bytes": 1000, "max_size_bytes": 5_000_000})
+    size = elem.find(f"{{{TNS}}}WithinSizeRange")
+    assert size.findtext(f"{{{TNS}}}MinimumSize") == "1000"
+    assert size.findtext(f"{{{TNS}}}MaximumSize") == "5000000"
+    parsed, unsupported = parse_conditions_element(elem)
+    assert parsed == {"min_size_bytes": 1000, "max_size_bytes": 5_000_000}
+    assert unsupported == []
+
+
+def test_build_size_range_one_bound_only():
+    elem = build_conditions_element({"min_size_bytes": 0, "max_size_bytes": None})
+    size = elem.find(f"{{{TNS}}}WithinSizeRange")
+    assert size.findtext(f"{{{TNS}}}MinimumSize") == "0"
+    assert size.find(f"{{{TNS}}}MaximumSize") is None
+
+
+def test_build_and_parse_date_range():
+    elem = build_conditions_element({
+        "received_after": "2026-01-01T00:00:00+00:00",
+        "received_before": "2026-02-01T00:00:00+00:00",
+    })
+    rng = elem.find(f"{{{TNS}}}WithinDateRange")
+    assert rng.findtext(f"{{{TNS}}}StartDateTime") == "2026-01-01T00:00:00+00:00"
+    assert rng.findtext(f"{{{TNS}}}EndDateTime") == "2026-02-01T00:00:00+00:00"
+    parsed, _ = parse_conditions_element(elem)
+    assert parsed == {"received_after": "2026-01-01T00:00:00+00:00",
+                      "received_before": "2026-02-01T00:00:00+00:00"}
+
+
+def test_within_date_and_size_range_are_last_in_order():
+    elem = build_conditions_element({
+        "subject_contains": ["hi"], "min_size_bytes": 10, "received_after": "2026-01-01",
+    })
+    tags = [child.tag.split("}", 1)[-1] for child in elem]
+    assert tags == ["ContainsSubjectStrings", "WithinDateRange", "WithinSizeRange"]
+
+
 def test_unsupported_conditions_are_flagged_not_dropped_silently():
+    """Categories/ItemClasses/MessageClassifications/FromConnectedAccounts
+    are the four RulePredicates deliberately excluded (no OWA UI for
+    them) — everything else OWA's rule editor exposes is now supported."""
     xml = f"""<Rule xmlns="{TNS}">
       <RuleId>abc</RuleId>
       <DisplayName>Weird</DisplayName>
       <Priority>2</Priority>
       <IsEnabled>false</IsEnabled>
       <Conditions>
-        <IsMeetingRequest/>
+        <Categories><String>Red</String></Categories>
         <FromAddresses><Address><EmailAddress>a@b.com</EmailAddress></Address></FromAddresses>
       </Conditions>
       <Actions>
@@ -237,7 +299,7 @@ def test_unsupported_conditions_are_flagged_not_dropped_silently():
     parsed = parse_rule_element(etree.fromstring(xml.encode()))
     assert parsed["conditions"] == {"from_addresses": ["a@b.com"]}
     assert parsed["actions"] == {"stop_processing": True}
-    assert sorted(parsed["unsupported_fields"]) == ["IsMeetingRequest", "SendSMSAlertToRecipients"]
+    assert sorted(parsed["unsupported_fields"]) == ["Categories", "SendSMSAlertToRecipients"]
 
 
 def test_parse_empty_conditions_and_actions():
