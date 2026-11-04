@@ -13,11 +13,13 @@ from .errors import HTTP_BY_CODE, ToolError
 from .multiuser import UserContextCache, extract_credentials_from_asgi_headers
 from .server import build_context, build_mcp_server, start_connection_manager
 from .tools.base import dispatch
+from .tools.writes import MAX_ATTACHMENT_BYTES
 
 logger = logging.getLogger(__name__)
 
 PUBLIC_PATHS = {"/health", "/livez", "/readyz", "/version"}
-MAX_BODY_BYTES = 1_048_576  # 1 MiB — tool arguments, not attachments
+# Tool arguments carry attachments as base64 (4/3 of their size).
+MAX_BODY_BYTES = MAX_ATTACHMENT_BYTES * 4 // 3 + 1_048_576
 
 
 def _validator_for(spec) -> Any:
@@ -259,7 +261,8 @@ async def serve_http(settings) -> None:
     user_cache = UserContextCache(ctx) if settings.ews_multi_user else None
     mcp_server = build_mcp_server(ctx, user_cache=user_cache)
     streamable = StreamableHTTPSessionManager(app=mcp_server, json_response=False,
-                                              stateless=True)
+                                              stateless=True,
+                                              max_request_body_size=MAX_BODY_BYTES)
     app = build_app(ctx, settings, streamable, user_cache=user_cache)
     config = uvicorn.Config(app, host=settings.mcp_host, port=settings.mcp_port,
                             log_level=settings.log_level.lower(), http="h11")

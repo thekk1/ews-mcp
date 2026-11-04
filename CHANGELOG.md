@@ -3,6 +3,13 @@
 ## [Unreleased]
 
 ### Added
+- `v5`: drafts can carry files. `create_draft` takes `attachments`, and the new
+  `add_draft_attachment` adds a file to an existing draft (`filename`,
+  `content_base64`, optional `content_type`; 50 MiB per call). `send_draft`
+  shows the attachments in its preview and binds its token to their names and
+  sizes; the token ignored attachments before, so a file added after the preview
+  would have gone out unreviewed. The HTTP
+  body limit grows from 1 MiB to fit them; `mcp>=1.30` for that setting.
 - `v5`: `search_messages` and `check_messages` accept `folder: f:all` for the
   whole mailbox: one search per mail folder with subfolders, merged newest first,
   without deleted items, junk, drafts and outbox. Each hit names its folder, and
