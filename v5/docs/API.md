@@ -73,7 +73,7 @@ Search mail. TWO ENGINES, mutually exclusive: pass `query` (an Exchange AQS stri
 | parameter | type | required | description |
 |---|---|---|---|
 | `query` | string | no | AQS query string — cannot be combined with the structured filters below. |
-| `folder` | string | no | Folder alias (f:inbox, f:sent, f7), path, or raw id. (default `f:inbox`) |
+| `folder` | string | no | Folder alias (f:inbox, f:sent, f7), path, raw id, or f:all for the whole mailbox: all mail folders with their subfolders, without deleted items, junk, drafts and outbox; each hit then names its folder. (default `f:inbox`) |
 | `sender` | string | no | Sender substring, matched client-side on the fetched page (email or display name). |
 | `from_` | string | no | DEPRECATED alias of `sender` — do not combine the two. |
 | `subject` | string | no | Subject substring. |
@@ -94,7 +94,7 @@ Check a whole list of values against one mail folder in one call: which values o
 |---|---|---|---|
 | `values` | string | yes | Values separated by commas or new lines; a JSON array of strings is accepted too. At most 200. |
 | `field` | string | no | Where to look for each value (default subject). (one of: `subject`, `sender`) |
-| `folder` | string | no | Folder alias, e.g. f:inbox (default) or f:sent. |
+| `folder` | string | no | Folder alias, e.g. f:inbox (default), f:sent, or f:all for the whole mailbox. |
 | `since` | string | no | Received at or after (ISO date). |
 | `until` | string | no | Received at or before (ISO date). |
 | `only_missing` | boolean | no | Return only the values without a match. |

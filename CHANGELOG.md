@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Added
+- `v5`: `search_messages` and `check_messages` accept `folder: f:all` for the
+  whole mailbox: one search per mail folder with subfolders, merged newest first,
+  without deleted items, junk, drafts and outbox. Each hit names its folder, and
+  the result reports `folders_searched` and any `folders_failed`.
 - `v5`: `get_attachment` and `get_message` now sniff `smime.p7m`
   (`application/pkcs7-mime`) attachments and report `smime_type:
   signed|enveloped` — that content-type/filename names BOTH opaque-signed
