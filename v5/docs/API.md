@@ -35,7 +35,7 @@ the registry is the single source of truth for what exists.
 | `update_messages` | write | draft | Bulk-update up to 50 messages: set_read and/or categories_add/categories_remove. |
 | `move_messages` | write | draft | Move up to 50 messages to a folder (id, f:alias or path). |
 | `create_event` | write | draft | Create a calendar event or, with recurrence, a recurring series. |
-| `update_event` | write | draft | Update event fields (subject/start/end/location/body). |
+| `update_event` | write | draft | Update event fields (subject/start/end/location/body/reminder). |
 | `send_draft` | send | full | Send an existing draft (the ONLY way mail leaves this mailbox). |
 | `respond_to_event` | send | full | Accept/tentative/decline a meeting — this SENDS a response to the organizer, so it is two-phase confirmed. |
 | `cancel_event` | destructive | full | Cancel a meeting you organize — sends cancellations to all attendees (destructive, two-phase confirmed). |
@@ -156,7 +156,7 @@ List calendar events overlapping a time window (default: today through +7d, serv
 
 #### `get_event` — read (min tier: read)
 
-Fetch one calendar event in full by id (a short alias like 'e3' from list_events, or a raw EWS id). Returns organizer, every attendee with their response (Accept/Decline/Tentative/…), the cleaned body text, a recurring flag, the rule of a series, your own response and, for an event you organize, whether invitations were sent.
+Fetch one calendar event in full by id (a short alias like 'e3' from list_events, or a raw EWS id). Returns organizer, every attendee with their response (Accept/Decline/Tentative/…), the cleaned body text, a recurring flag, the rule of a series, the reminder (null if none), your own response and, for an event you organize, whether invitations were sent.
 
 | parameter | type | required | description |
 |---|---|---|---|
@@ -308,7 +308,7 @@ Move up to 50 messages to a folder (id, f:alias or path). Message ids are re-bou
 
 #### `create_event` — write (min tier: draft)
 
-Create a calendar event or, with recurrence, a recurring series. Default send_invitations=false saves it like a draft WITHOUT emailing attendees (no confirm needed): they stay on the event, and the organizer can send it from Outlook. With send_invitations=true, invitations leave the org: two-phase confirm + send kill-switch apply.
+Create a calendar event or, with recurrence, a recurring series. Default send_invitations=false saves it like a draft WITHOUT emailing attendees (no confirm needed): they stay on the event, and the organizer can send it from Outlook. With send_invitations=true, invitations leave the org: two-phase confirm + send kill-switch apply. Without reminder_minutes the event has no reminder.
 
 > Two-phase confirm for some argument combinations: the first call returns a preview + `confirm_token`; repeat the call with the token to execute.
 
@@ -321,11 +321,12 @@ Create a calendar event or, with recurrence, a recurring series. Default send_in
 | `location` | string | no |  |
 | `body` | string | no |  |
 | `recurrence` | object | no | Repeat the event. start and end are the first occurrence; the time of day stays the same across DST changes. Without until or count the series has no end. |
+| `reminder_minutes` | integer | no | Remind this many minutes before the start; 0 is at the start. |
 | `send_invitations` | boolean | no | (default `False`) |
 
 #### `update_event` — write (min tier: draft)
 
-Update event fields (subject/start/end/location/body). An occurrence id from list_events changes that occurrence only; scope='series' changes the whole series and overwrites those fields on occurrences changed individually before. Default notify_attendees=false is a silent metadata edit; true notifies changed attendees → two-phase confirm + send kill-switch apply.
+Update event fields (subject/start/end/location/body/reminder). An occurrence id from list_events changes that occurrence only; scope='series' changes the whole series and overwrites those fields on occurrences changed individually before. Default notify_attendees=false is a silent metadata edit; true notifies changed attendees → two-phase confirm + send kill-switch apply.
 
 > Two-phase confirm for some argument combinations: the first call returns a preview + `confirm_token`; repeat the call with the token to execute.
 
@@ -338,6 +339,7 @@ Update event fields (subject/start/end/location/body). An occurrence id from lis
 | `location` | string | no |  |
 | `body` | string | no |  |
 | `scope` | string | no | For recurring events. With 'series', start and end must be on the series' first date. (one of: `occurrence`, `series`) |
+| `reminder_minutes` | integer | no | Remind this many minutes before the start; 0 is at the start, -1 removes the reminder. |
 | `notify_attendees` | boolean | no | (default `False`) |
 
 #### `send_draft` — send (min tier: full)

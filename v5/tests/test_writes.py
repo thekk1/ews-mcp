@@ -768,6 +768,47 @@ def test_create_event_rejects_bad_recurrence(tmp_path, monkeypatch, recurrence, 
     assert FakeCalendarItem.last is None  # nothing was built or saved
 
 
+def test_create_event_sets_a_reminder(tmp_path, monkeypatch):
+    account = make_account()
+    ctx = make_ctx(tmp_path, account)
+    monkeypatch.setattr(writes, "CalendarItem", FakeCalendarItem)
+    res = call(ctx, "create_event", {"subject": "Sync", "start": "2026-07-01", "end": "2026-07-01T01:00",
+                                     "reminder_minutes": 15})
+    ev = FakeCalendarItem.last
+    assert ev.reminder_is_set is True and ev.reminder_minutes_before_start == 15
+    assert res["reminder_minutes"] == 15
+
+    res = call(ctx, "create_event", {"subject": "Sync", "start": "2026-07-01", "end": "2026-07-01T01:00"})
+    assert not hasattr(FakeCalendarItem.last, "reminder_is_set")
+    assert "reminder_minutes" not in res
+
+
+@pytest.mark.parametrize("minutes", [-1, 1.5, "15", True])
+def test_create_event_rejects_a_bad_reminder(tmp_path, monkeypatch, minutes):
+    account = make_account()
+    ctx = make_ctx(tmp_path, account)
+    monkeypatch.setattr(writes, "CalendarItem", FakeCalendarItem)
+    FakeCalendarItem.last = None
+    res = call(ctx, "create_event", {"subject": "Sync", "start": "2026-07-01", "end": "2026-07-01T01:00",
+                                     "reminder_minutes": minutes})
+    assert res["ok"] is False and res["error"]["code"] == "validation"
+    assert FakeCalendarItem.last is None
+
+
+def test_update_event_sets_and_removes_a_reminder(tmp_path):
+    account = make_account()
+    ev = _event(account, "Single")
+    ctx = make_ctx(tmp_path, account)
+    res = call(ctx, "update_event", {"event_id": "RAW-E3", "reminder_minutes": 30})
+    assert res["updated_fields"] == ["reminder_is_set", "reminder_minutes_before_start"]
+    assert ev.reminder_is_set is True and ev.reminder_minutes_before_start == 30
+
+    ev = _event(account, "Single")
+    res = call(ctx, "update_event", {"event_id": "RAW-E3", "reminder_minutes": -1})
+    assert res["updated_fields"] == ["reminder_is_set"]
+    assert ev.reminder_is_set is False
+
+
 def test_create_event_with_attendees_reports_pending_invitations(tmp_path, monkeypatch):
     account = make_account()
     ctx = make_ctx(tmp_path, account)

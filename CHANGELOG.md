@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- `v5`: reminders. `create_event` and `update_event` take `reminder_minutes`
+  (`-1` removes a reminder), and `get_event` returns it.
 - `v5`: recurring events. `create_event` takes `recurrence` (daily, weekly or
   monthly, with `interval`, `weekdays`, `until` or `count`), in the server's named
   zone so a series keeps its time across DST changes. `get_event` returns the rule

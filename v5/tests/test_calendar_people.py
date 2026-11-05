@@ -266,6 +266,17 @@ def test_get_event_reports_invitation_status_to_the_organizer(tmp_path, sent):
     assert _get(tmp_path, ev)["invitations_sent"] is sent
 
 
+def test_get_event_reports_the_reminder(tmp_path):
+    ev = _series_event("Single")
+    ev.reminder_is_set = True
+    ev.reminder_minutes_before_start = 15
+    assert _get(tmp_path, ev)["reminder_minutes"] == 15
+
+    ev = _series_event("Single")
+    ev.reminder_is_set = False
+    assert _get(tmp_path, ev)["reminder_minutes"] is None
+
+
 def test_get_event_hides_invitation_status_from_an_attendee(tmp_path):
     ev = _series_event("Single")
     ev.required_attendees = [SimpleNamespace(

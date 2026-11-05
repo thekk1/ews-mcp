@@ -225,6 +225,10 @@ async def _get_event(ctx: Context, id: str) -> Dict[str, Any]:
     my_response = getattr(item, "my_response_type", None)
     if my_response:
         event["my_response"] = str(my_response)
+    if getattr(item, "reminder_is_set", None) is True:
+        event["reminder_minutes"] = item.reminder_minutes_before_start
+    elif getattr(item, "reminder_is_set", None) is False:
+        event["reminder_minutes"] = None
     # Only the organizer's copy says whether the invitations went out.
     if my_response == "Organizer" and event["attendees"]:
         event["invitations_sent"] = bool(getattr(item, "meeting_request_was_sent", False))
@@ -563,8 +567,9 @@ TOOLS: List[ToolSpec] = [
             "Fetch one calendar event in full by id (a short alias like 'e3' "
             "from list_events, or a raw EWS id). Returns organizer, every "
             "attendee with their response (Accept/Decline/Tentative/…), the "
-            "cleaned body text, a recurring flag, the rule of a series, your own "
-            "response and, for an event you organize, whether invitations were sent."
+            "cleaned body text, a recurring flag, the rule of a series, the reminder "
+            "(null if none), your own response and, for an event you organize, "
+            "whether invitations were sent."
         ),
         side_effect_class="read",
         input_schema={
