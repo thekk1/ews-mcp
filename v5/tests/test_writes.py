@@ -816,7 +816,7 @@ def test_create_event_with_attendees_reports_pending_invitations(tmp_path, monke
     res = call(ctx, "create_event", {"subject": "Sync", "start": "2026-07-01",
                                      "end": "2026-07-01T01:00", "attendees": ["a@corp.example"]})
     assert res["invitations_sent"] is False and res["invitations_pending"] is True
-    assert "Outlook" in res["note"]
+    assert "Outlook" in res["note"] and "Evolution" in res["note"]
     res = call(ctx, "create_event", {"subject": "Sync", "start": "2026-07-01",
                                      "end": "2026-07-01T01:00"})
     assert "invitations_pending" not in res and "note" not in res

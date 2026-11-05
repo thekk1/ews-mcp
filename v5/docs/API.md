@@ -308,7 +308,7 @@ Move up to 50 messages to a folder (id, f:alias or path). Message ids are re-bou
 
 #### `create_event` — write (min tier: draft)
 
-Create a calendar event or, with recurrence, a recurring series. Default send_invitations=false saves it like a draft WITHOUT emailing attendees (no confirm needed): they stay on the event, and the organizer can send it from Outlook. With send_invitations=true, invitations leave the org: two-phase confirm + send kill-switch apply. Without reminder_minutes the event has no reminder.
+Create a calendar event or, with recurrence, a recurring series. Default send_invitations=false saves it like a draft WITHOUT emailing attendees (no confirm needed): they stay on the event, and the organizer can send it from Outlook or Evolution. With send_invitations=true, invitations leave the org: two-phase confirm + send kill-switch apply. Without reminder_minutes the event has no reminder.
 
 > Two-phase confirm for some argument combinations: the first call returns a preview + `confirm_token`; repeat the call with the token to execute.
 
