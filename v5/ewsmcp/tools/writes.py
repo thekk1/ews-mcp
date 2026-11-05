@@ -37,13 +37,14 @@ import binascii
 import html as _html
 import logging
 import mimetypes
+import re
 import threading
 import time
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
-from exchangelib import CalendarItem, FileAttachment, HTMLBody, Message, OofSettings
+from exchangelib import CalendarItem, ExtendedProperty, FileAttachment, HTMLBody, Message, OofSettings
 from exchangelib.items import (
     SEND_TO_ALL_AND_SAVE_COPY,
     SEND_TO_CHANGED_AND_SAVE_COPY,
@@ -121,6 +122,17 @@ def _idempotency_put(key: str, record: Dict[str, Any]) -> None:
             oldest = min(_IDEMPOTENT_SENDS, key=lambda k: _IDEMPOTENT_SENDS[k].get("ts", 0))
             del _IDEMPOTENT_SENDS[oldest]
         _IDEMPOTENT_SENDS[key] = record
+
+
+# EWS has no general URL field on an event. Evolution keeps the one its event
+# editor shows in this named property (evolution-ews, e-ews-item.c).
+class _EventUrl(ExtendedProperty):
+    distinguished_property_set_id = "PublicStrings"
+    property_name = "EvolutionEWSURL"
+    property_type = "String"
+
+
+CalendarItem.register("event_url", _EventUrl)
 
 
 # --- shared helpers ----------------------------------------------------------
@@ -567,6 +579,21 @@ def _build_recurrence(spec: Dict[str, Any], start: datetime) -> Recurrence:
     return Recurrence(pattern=pattern, start=first_day)
 
 
+_URL_IN_TEXT = re.compile(r"https?://[^\s<>\"]+")
+
+
+def _event_body(text: str) -> HTMLBody:
+    """Like _wrap_html, with links clickable: a meeting link must work in the description."""
+    linked = _URL_IN_TEXT.sub(lambda m: f'<a href="{m.group(0)}">{m.group(0)}</a>',
+                              str(_wrap_html(text)).replace("<br/>", "<br/> "))
+    return HTMLBody(linked)
+
+
+def _check_url(url: str) -> None:
+    if not re.fullmatch(r"https?://\S+", url):
+        raise ToolError("validation", "url must be a http(s) address without spaces")
+
+
 def _check_reminder(minutes: Any, minimum: int) -> None:
     if isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < minimum:
         raise ToolError("validation", f"reminder_minutes must be a whole number of at least {minimum}")
@@ -576,6 +603,7 @@ async def _create_event(ctx: Context, *, subject: str, start: str, end: str,
                         attendees: Optional[List[str]] = None,
                         location: Optional[str] = None,
                         body: Optional[str] = None,
+                        url: Optional[str] = None,
                         recurrence: Optional[Dict[str, Any]] = None,
                         reminder_minutes: Optional[int] = None,
                         send_invitations: bool = False) -> Dict[str, Any]:
@@ -599,6 +627,8 @@ async def _create_event(ctx: Context, *, subject: str, start: str, end: str,
         raise ToolError("validation", "end must be after start")
     if reminder_minutes is not None:
         _check_reminder(reminder_minutes, 0)
+    if url is not None:
+        _check_url(url)
     rule = None
     if recurrence is not None:
         start_dt = _series_time(start_dt, ctx.settings.ews_tz)
@@ -614,7 +644,9 @@ async def _create_event(ctx: Context, *, subject: str, start: str, end: str,
         if location:
             item.location = location
         if body is not None:
-            item.body = _wrap_html(body)
+            item.body = _event_body(body)
+        if url is not None:
+            item.event_url = url
         if rule is not None:
             item.recurrence = rule
         if reminder_minutes is not None:
@@ -631,15 +663,17 @@ async def _create_event(ctx: Context, *, subject: str, start: str, end: str,
         result["recurring"] = True
     if reminder_minutes is not None:
         result["reminder_minutes"] = reminder_minutes
+    if url is not None:
+        result["url"] = url
     if attendees and not send_invitations:
         result["invitations_pending"] = True
         result["note"] = (
             "Saved like a draft: the attendees are on the event, but nobody was invited. "
             "The organizer sends it from their calendar program. Outlook: open the event, "
             "for a series the whole series, then choose Send. Evolution with the Exchange "
-            "account: open the event, for a series all occurrences, change something small "
-            "and save; Exchange then invites all attendees without asking, and again on "
-            "every later save."
+            "account: open the event, change something small and save; if it asks what to "
+            "modify, choose all instances. Exchange then invites all attendees without "
+            "asking, and again on every later save."
         )
     return result
 
@@ -650,6 +684,7 @@ async def _update_event(ctx: Context, *, event_id: str,
                         end: Optional[str] = None,
                         location: Optional[str] = None,
                         body: Optional[str] = None,
+                        url: Optional[str] = None,
                         scope: Optional[str] = None,
                         reminder_minutes: Optional[int] = None,
                         notify_attendees: bool = False) -> Dict[str, Any]:
@@ -662,9 +697,11 @@ async def _update_event(ctx: Context, *, event_id: str,
             "SEND_ENABLED=false on this server.",
             hint="Update without notifying, or have the operator flip SEND_ENABLED.",
         )
-    if all(v is None for v in (subject, start, end, location, body, reminder_minutes)):
+    if all(v is None for v in (subject, start, end, location, body, url, reminder_minutes)):
         raise ToolError("validation",
-                        "nothing to update: pass subject/start/end/location/body/reminder_minutes")
+                        "nothing to update: pass subject/start/end/location/body/url/reminder_minutes")
+    if url:
+        _check_url(url)
     if reminder_minutes is not None:
         _check_reminder(reminder_minutes, -1)
     if scope not in (None, "occurrence", "series"):
@@ -706,8 +743,11 @@ async def _update_event(ctx: Context, *, event_id: str,
                 setattr(item, field, value)
                 changed.append(field)
         if body is not None:
-            item.body = _wrap_html(body)
+            item.body = _event_body(body)
             changed.append("body")
+        if url is not None:
+            item.event_url = url or None
+            changed.append("event_url")
         if reminder_minutes is not None:
             item.reminder_is_set = reminder_minutes >= 0
             changed.append("reminder_is_set")
@@ -1059,12 +1099,16 @@ TOOLS: List[ToolSpec] = [
             "attendees (no confirm needed): they stay on the event, and the organizer "
             "can send it from Outlook or Evolution. With send_invitations=true, invitations leave "
             "the org: two-phase confirm + send kill-switch apply. Without "
-            "reminder_minutes the event has no reminder."
+            "reminder_minutes the event has no reminder. url fills the URL field of "
+            "Evolution's event editor; Outlook has no such field and attendees may not "
+            "receive it, so repeat a meeting link in body."
         ),
         side_effect_class="write",  # tier: draft; invite path confirm-gated below
         input_schema=_obj({
             "subject": _STR, "start": _STR, "end": _STR,
             "attendees": _EMAILS, "location": _STR, "body": _STR,
+            "url": {"type": "string", "description": "The event's web address, such as a "
+                                                     "meeting link. http or https."},
             "recurrence": _RECURRENCE,
             "reminder_minutes": {"type": "integer", "minimum": 0,
                                  "description": "Remind this many minutes before the start; "
@@ -1077,7 +1121,7 @@ TOOLS: List[ToolSpec] = [
     ToolSpec(
         name="update_event",
         description=(
-            "Update event fields (subject/start/end/location/body/reminder). An occurrence id "
+            "Update event fields (subject/start/end/location/body/url/reminder). An occurrence id "
             "from list_events changes that occurrence only; scope='series' changes "
             "the whole series and overwrites those fields on occurrences changed "
             "individually before. Default notify_attendees=false is a silent metadata "
@@ -1088,6 +1132,8 @@ TOOLS: List[ToolSpec] = [
         input_schema=_obj({
             "event_id": _STR, "subject": _STR, "start": _STR, "end": _STR,
             "location": _STR, "body": _STR,
+            "url": {"type": "string", "description": "The event's web address, such as a "
+                                                     "meeting link; an empty string removes it."},
             "scope": {"type": "string", "enum": ["occurrence", "series"],
                       "description": "For recurring events. With 'series', start and end "
                                      "must be on the series' first date."},
