@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from exchangelib import Account, Configuration, Credentials, DELEGATE, EWSTimeZone
+from exchangelib.errors import UnauthorizedError
 from exchangelib.protocol import (
     BaseProtocol,
     CachingProtocol,
@@ -31,6 +32,23 @@ WELL_KNOWN = {
     "f:trash": "trash", "f:junk": "junk", "f:outbox": "outbox",
     "f:calendar": "calendar", "f:contacts": "contacts", "f:tasks": "tasks",
 }
+
+
+class RejectingFaultTolerance(FaultTolerance):
+    """FaultTolerance that does not retry an HTTP 401.
+
+    exchangelib treats a 401 as throttling ("EWS sometimes throws 401's when
+    it wants us to throttle connections") and backs off 10, 20, 40, ... s
+    until max_wait. With per-request credentials a 401 is almost always a
+    wrong password: the call then hangs for minutes, the client times out
+    first, and every retry is one more failed login on the account.
+    """
+
+    def raise_response_errors(self, response):
+        if response.status_code == 401 and b"currently locked out" not in response.content:
+            raise UnauthorizedError(
+                f"Exchange rejected the credentials (HTTP 401) for {response.url}")
+        return super().raise_response_errors(response)
 
 
 class EWSGateway:
@@ -64,7 +82,10 @@ class EWSGateway:
         kwargs: Dict[str, Any] = dict(
             service_endpoint=s.ews_server_url,
             credentials=Credentials(s.ews_username or s.ews_email, s.ews_password or ""),
-            retry_policy=FaultTolerance(max_wait=s.ews_retry_max_wait_seconds),
+            # Multi-user: the credentials come from the caller, so a 401 is
+            # reported at once instead of being retried as throttling.
+            retry_policy=(RejectingFaultTolerance if s.ews_multi_user else FaultTolerance)(
+                max_wait=s.ews_retry_max_wait_seconds),
         )
         if s.ews_auth_type_force:  # escape hatch for a DIFFERENT Exchange only
             logger.warning("auth_type FORCED to %s — the primary Exchange requires auto-negotiation",
