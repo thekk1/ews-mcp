@@ -101,7 +101,7 @@ def test_multi_user_reports_401_at_once_instead_of_backing_off():
     from ewsmcp.errors import map_exception
 
     gw = EWSGateway(make_settings(ews_multi_user=True, ews_email=None, mcp_transport="http"))
-    policy = gw._configuration().retry_policy
+    policy = gw._retry_policy()
     assert isinstance(policy, client_mod.RejectingFaultTolerance)
     with pytest.raises(UnauthorizedError) as exc:
         policy.raise_response_errors(_response(401))
@@ -116,7 +116,7 @@ def test_single_mailbox_keeps_retrying_401():
     import pytest
     from exchangelib.errors import ErrorServerBusy
 
-    policy = EWSGateway(make_settings())._configuration().retry_policy
+    policy = EWSGateway(make_settings())._retry_policy()
     assert not isinstance(policy, client_mod.RejectingFaultTolerance)
     with pytest.raises(ErrorServerBusy):
         policy.raise_response_errors(_response(401))

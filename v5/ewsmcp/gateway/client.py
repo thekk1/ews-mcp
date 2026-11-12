@@ -76,16 +76,19 @@ class EWSGateway:
                 self._account = self._build_account()
             return self._account
 
+    def _retry_policy(self) -> FaultTolerance:
+        # Multi-user: the credentials come from the caller, so a 401 is
+        # reported at once instead of being retried as throttling.
+        cls = RejectingFaultTolerance if self.settings.ews_multi_user else FaultTolerance
+        return cls(max_wait=self.settings.ews_retry_max_wait_seconds)
+
     def _build_account(self) -> Account:
         s = self.settings
         BaseProtocol.TIMEOUT = s.request_timeout
         kwargs: Dict[str, Any] = dict(
             service_endpoint=s.ews_server_url,
             credentials=Credentials(s.ews_username or s.ews_email, s.ews_password or ""),
-            # Multi-user: the credentials come from the caller, so a 401 is
-            # reported at once instead of being retried as throttling.
-            retry_policy=(RejectingFaultTolerance if s.ews_multi_user else FaultTolerance)(
-                max_wait=s.ews_retry_max_wait_seconds),
+            retry_policy=self._retry_policy(),
         )
         if s.ews_auth_type_force:  # escape hatch for a DIFFERENT Exchange only
             logger.warning("auth_type FORCED to %s — the primary Exchange requires auto-negotiation",
