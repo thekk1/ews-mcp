@@ -9,7 +9,8 @@ import jsonschema
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from . import __version__
-from .errors import HTTP_BY_CODE
+from .errors import HTTP_BY_CODE, ToolError
+from .multiuser import AUTHORIZATION_HEADER, UserContextCache, asgi_header, token_transport_error
 from .server import build_context, build_mcp_server, start_connection_manager
 from .tools.base import dispatch
 from .tools.writes import max_attachment_bytes
@@ -159,7 +160,8 @@ async def _read_json_body(receive, send, max_bytes: int) -> Optional[Any]:
         return None
 
 
-def build_app(ctx, settings, streamable: Optional[Any] = None):
+def build_app(ctx, settings, streamable: Optional[Any] = None,
+              user_cache: Optional[UserContextCache] = None):
     """ASGI app closure — separated from serve_http so tests can drive it."""
     api_key = settings.mcp_api_key or ""
     body_limit = max_body_bytes(settings)
@@ -211,6 +213,22 @@ def build_app(ctx, settings, streamable: Optional[Any] = None):
             return await _send_json(send, 401, {"ok": False, "error": {
                 "code": "auth_failed", "message": "missing or invalid bearer token"}})
 
+        if user_cache is not None and user_cache.token_auth and (
+                path == "/mcp" or path.startswith("/api/tools/")):
+            # Token mode: a missing or expired token is a 401 from the
+            # endpoint itself, so the MCP client refreshes or starts OAuth.
+            problem = token_transport_error(asgi_header(scope.get("headers"), AUTHORIZATION_HEADER))
+            if problem is not None:
+                challenge, message = problem
+                body = json.dumps({"ok": False, "error": {
+                    "code": "auth_failed", "message": message}}).encode()
+                await send({"type": "http.response.start", "status": 401, "headers": [
+                    [b"content-type", b"application/json"],
+                    [b"content-length", str(len(body)).encode()],
+                    [b"www-authenticate", challenge.encode()],
+                ]})
+                return await send({"type": "http.response.body", "body": body})
+
         if path == "/mcp":
             if streamable is None:
                 return await _send_json(send, 503, {"ok": False, "error": {
@@ -238,6 +256,13 @@ def build_app(ctx, settings, streamable: Optional[Any] = None):
             if spec is None:
                 return await _send_json(send, 404, {"ok": False, "error": {
                     "code": "validation", "message": f"Unknown tool: {name}"}})
+            active_ctx = ctx
+            if user_cache is not None:
+                try:
+                    email, password = user_cache.credentials_from_asgi_headers(scope.get("headers"))
+                except ToolError as err:
+                    return await _send_json(send, err.http_status, err.to_dict())
+                active_ctx = user_cache.get(email, password)
             arguments = await _read_json_body(receive, send, body_limit)
             if arguments is None:
                 return
@@ -251,7 +276,7 @@ def build_app(ctx, settings, streamable: Optional[Any] = None):
                 return await _send_json(send, 400, {"ok": False, "error": {
                     "code": "validation", "message": error.message,
                     "hint": f"See the {name} schema in /openapi.json."}})
-            result = await dispatch(ctx, spec, arguments, transport="rest")
+            result = await dispatch(active_ctx, spec, arguments, transport="rest")
             status = 200
             if isinstance(result, dict) and result.get("ok") is False:
                 status = HTTP_BY_CODE.get(result.get("error", {}).get("code", ""), 500)
@@ -267,12 +292,13 @@ async def serve_http(settings) -> None:
     import uvicorn
 
     ctx = build_context(settings)
-    mcp_server = build_mcp_server(ctx)
+    user_cache = UserContextCache(ctx) if settings.ews_multi_user else None
+    mcp_server = build_mcp_server(ctx, user_cache=user_cache)
     body_limit = max_body_bytes(settings)
     streamable = StreamableHTTPSessionManager(app=mcp_server, json_response=False,
                                               stateless=True,
                                               max_request_body_size=body_limit)
-    app = build_app(ctx, settings, streamable)
+    app = build_app(ctx, settings, streamable, user_cache=user_cache)
     config = uvicorn.Config(app, host=settings.mcp_host, port=settings.mcp_port,
                             log_level=settings.log_level.lower(), http="h11")
     async with streamable.run():

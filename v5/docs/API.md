@@ -455,6 +455,7 @@ ids change when items move; re-run the search for fresh ones.
 | `auth_failed` | 401 | missing/invalid `MCP_API_KEY`, Exchange rejected credentials (HTTP 401), or the lockout guard (`AuthBreaker`) is open (retrying will not help) |
 | `tier_blocked` | 403 | tool needs a higher `EWS_CAPABILITY_TIER` |
 | `kill_switch` | 403 | send-class call while `SEND_ENABLED=false` |
+| `forbidden` | 403 | multi-user impersonation: mailbox outside `EWS_IMPERSONATION_ALLOWED_DOMAINS` |
 | `recipient_blocked` | 403 | recipient failed the allow/denylist |
 | `not_found` | 404 | stale/unknown id (hint: re-search) |
 | `confirm_invalid` | 409 | confirm token expired / consumed / content changed |

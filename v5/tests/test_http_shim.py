@@ -147,7 +147,7 @@ def test_serve_http_passes_derived_body_limit_to_session_manager(tmp_path, monke
         return None
 
     monkeypatch.setattr(http_mod, "build_context", lambda _s: _ctx(tmp_path))
-    monkeypatch.setattr(http_mod, "build_mcp_server", lambda _c: object())
+    monkeypatch.setattr(http_mod, "build_mcp_server", lambda _c, **_kw: object())
     monkeypatch.setattr(http_mod, "StreamableHTTPSessionManager", _DummySessionManager)
     monkeypatch.setattr(uvicorn.Server, "serve", _no_serve)
     asyncio.run(http_mod.serve_http(settings))

@@ -134,7 +134,7 @@ message.
 
 ## §Errors — a taxonomy, not tracebacks
 
-`validation | auth_failed | tier_blocked | kill_switch |
+`validation | auth_failed | tier_blocked | kill_switch | forbidden |
 recipient_blocked | confirm_invalid | not_found | throttled | rate_capped
 | upstream_unavailable | upstream_error | internal` — each with an
 LLM-directed `hint` and `retry_after_s` where meaningful. Handler
@@ -156,6 +156,37 @@ Exchange contact; a background warmup loop owns connection recovery
 transient failures, heartbeat re-probe with a REAL network round trip, and
 a bounded `auth_failed` state on HTTP 401 rejections that respects the
 gateway's auth breaker cooldown and stops after `EWS_AUTH_MAX_REJECTIONS`).
+
+## §Multi-user
+
+`EWS_MULTI_USER=true` (HTTP transport only) drops the single shared
+mailbox: every call instead carries its own `X-EWS-Email` /
+`X-EWS-Password` headers, resolved to a per-user `Context` with its own
+`EWSGateway` (`multiuser.UserContextCache`, bounded + idle-evicting).
+Alias DB, audit log, cache mirror, semantic index and the connection
+manager are all per-user state that would otherwise leak between
+identities, so they stay out entirely in this mode — reads go straight
+to EWS. The one thing shared is the tool `registry` itself (stateless,
+built once from the tier-filtered config).
+
+`EWS_MULTI_USER_AUTH=impersonation` swaps the per-user password for one
+service account with the ApplicationImpersonation role: `X-EWS-Email`
+names the mailbox, the gateway opens it with exchangelib's
+`IMPERSONATION` access type. The gateway in front is then the only thing
+vouching for the identity, so boot refuses this mode without
+`MCP_API_KEY`; `EWS_IMPERSONATION_ALLOWED_DOMAINS` narrows the mailboxes
+a request may name (`forbidden` otherwise), and a request that still
+sends `X-EWS-Password` is refused. All per-user gateways share the
+service account's cached exchangelib Protocol, so evicting one drops only
+its Account, never the shared sessions.
+
+`EWS_MULTI_USER_AUTH=token` takes the user's own OAuth access token from
+`Authorization: Bearer` and hands it to exchangelib as is
+(`OAuth2AuthorizationCodeCredentials(access_token=…)`, `OAUTH2`); a new
+token rebuilds that user's Context. The mailbox is `X-EWS-Email` or the
+token's address claim. A missing or expired token is a 401 at the HTTP
+layer, before dispatch, because MCP clients refresh only on a transport
+401, never on a tool result that quotes one.
 
 ## §Audit
 

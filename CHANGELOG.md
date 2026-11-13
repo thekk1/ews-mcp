@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+- `v5`: multi-user mode (`EWS_MULTI_USER=true`, HTTP transport only) —
+  each request carries its own `X-EWS-Email`/`X-EWS-Password` headers
+  (e.g. LibreChat `customUserVars`) instead of a shared mailbox, resolved
+  to a bounded, idle-evicting cache of per-user Exchange sessions
+  (`ewsmcp/multiuser.py`). Cache mirror, audit log, alias DB and semantic
+  index are all disabled in this mode — see README "Multi-user mode" and
+  `v5/DESIGN.md` §Multi-user. Ids stay short: each user context holds an
+  in-memory alias map that is never shared and is dropped with the
+  context.
+- `v5`: `EWS_MULTI_USER_AUTH=impersonation` as an alternative to per-user
+  passwords in multi-user mode: one service account with the
+  ApplicationImpersonation role (`EWS_USERNAME`/`EWS_PASSWORD`) opens the
+  mailbox named in `X-EWS-Email`; no user password is sent or held.
+  Requires `MCP_API_KEY`, refuses requests that still send
+  `X-EWS-Password`, and `EWS_IMPERSONATION_ALLOWED_DOMAINS` restricts the
+  mailboxes a request may name (new error code `forbidden`, 403).
+- `v5`: `EWS_MULTI_USER_AUTH=token`: each request's own OAuth access token
+  for Exchange (`Authorization: Bearer`), passed to exchangelib as is; the
+  mailbox comes from `X-EWS-Email` or the token's address claim. A missing
+  or expired token (`exp` within 30 s) gets HTTP 401 with
+  `WWW-Authenticate` from `/mcp` and `/api/tools/*`, so MCP clients start
+  OAuth or refresh. `MCP_API_KEY` is then sent as `X-API-Key`.
+
 ## [4.5.0a2] - 2026-11-13
 
 ### Added

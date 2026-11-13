@@ -22,11 +22,14 @@ from exchangelib import (
     BASIC,
     DELEGATE,
     DIGEST,
+    IMPERSONATION,
     NTLM,
+    OAUTH2,
     Account,
     Configuration,
     Credentials,
     EWSTimeZone,
+    OAuth2AuthorizationCodeCredentials,
 )
 from exchangelib.errors import UnauthorizedError
 from exchangelib.protocol import (
@@ -387,25 +390,13 @@ class EWSGateway:
     def _build_account(self) -> Account:
         s = self.settings
         BaseProtocol.TIMEOUT = s.request_timeout
-        policy = RejectingFaultTolerance(
-            max_wait=s.ews_retry_max_wait_seconds,
-            configured_auth_type=s.ews_auth_type_force,
-            on_rejection=lambda: self._breaker.record_rejection(),
-        )
-        kwargs: Dict[str, Any] = dict(
-            service_endpoint=s.ews_server_url,
-            credentials=Credentials(s.ews_username or s.ews_email, s.ews_password or ""),
-            retry_policy=policy,
-        )
-        if s.ews_auth_type_force:
-            logger.info("Using forced Exchange auth scheme: %s", s.ews_auth_type_force)
-            kwargs["auth_type"] = AUTH_TYPE_BY_SETTING[s.ews_auth_type_force]
-        config = Configuration(**kwargs)
+        config = self._configuration()
+        policy = config.retry_policy
         account = Account(
             primary_smtp_address=s.ews_email,
             config=config,
             autodiscover=False,
-            access_type=DELEGATE,
+            access_type=self._access_type(),
             default_timezone=EWSTimeZone(s.ews_tz),
         )
         # CachingProtocol keys on (service_endpoint, credentials), so a second
@@ -415,6 +406,46 @@ class EWSGateway:
         if protocol is not None and getattr(protocol, "retry_policy", None) is not policy:
             protocol.config.retry_policy = policy
         return account
+
+    def _access_type(self) -> str:
+        # Impersonation: the service account's credentials, the requested
+        # mailbox as primary_smtp_address (multiuser.py).
+        return IMPERSONATION if self.settings.impersonation else DELEGATE
+
+    def _retry_policy(self) -> RejectingFaultTolerance:
+        s = self.settings
+        return RejectingFaultTolerance(
+            max_wait=s.ews_retry_max_wait_seconds,
+            configured_auth_type="oauth2" if s.ews_access_token else s.ews_auth_type_force,
+            on_rejection=lambda: self._breaker.record_rejection(),
+        )
+
+    def _configuration(self) -> Configuration:
+        """Connection settings without touching the network (an Account
+        built from them asks Exchange for its version right away)."""
+        s = self.settings
+        if s.ews_access_token:
+            # Token mode (multiuser.py): the caller's own access token, used
+            # as is. No client id/secret, so exchangelib never refreshes it
+            # itself; the gateway in front gets a new one and the per-user
+            # Context is rebuilt with it.
+            token: Dict[str, Any] = {"access_token": s.ews_access_token, "token_type": "Bearer"}
+            if s.ews_access_token_expires_at:
+                token["expires_at"] = s.ews_access_token_expires_at
+            credentials: Any = OAuth2AuthorizationCodeCredentials(access_token=token)
+        else:
+            credentials = Credentials(s.ews_username or s.ews_email, s.ews_password or "")
+        kwargs: Dict[str, Any] = dict(
+            service_endpoint=s.ews_server_url,
+            credentials=credentials,
+            retry_policy=self._retry_policy(),
+        )
+        if s.ews_access_token:
+            kwargs["auth_type"] = OAUTH2
+        elif s.ews_auth_type_force:
+            logger.info("Using forced Exchange auth scheme: %s", s.ews_auth_type_force)
+            kwargs["auth_type"] = AUTH_TYPE_BY_SETTING[s.ews_auth_type_force]
+        return Configuration(**kwargs)
 
     def reset(self) -> None:
         """Drop the cached account AND exchangelib's protocol-cache entry.
@@ -462,6 +493,25 @@ class EWSGateway:
             err = self._breaker.record_rejection()
         self.last_connection_error = f"ToolError: {err.message}"
         return err
+
+    def close(self) -> None:
+        """Tear down this gateway for good (multi-user eviction only —
+        the process-wide single-mailbox gateway just lives until exit).
+
+        Under impersonation every per-user gateway runs on the same
+        service-account credentials, so exchangelib hands them all the same
+        cached Protocol: closing it, or clearing the protocol cache, would
+        cut the sessions of every other user. Only this gateway's own
+        account and folder cache go then.
+        """
+        if self.settings.impersonation:
+            with self._account_lock:
+                self._account = None
+            self._folder_cache.clear()
+            self._folder_cache_ts = 0.0
+        else:
+            self.reset()
+        self._pool.shutdown(wait=False, cancel_futures=True)
 
     def test_connection(self) -> bool:
         """Real network probe — must round-trip on EVERY call.
