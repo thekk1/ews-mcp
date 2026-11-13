@@ -249,6 +249,9 @@ async def _get_event(ctx: Context, id: str) -> Dict[str, Any]:
         event["reminder_minutes"] = item.reminder_minutes_before_start
     elif getattr(item, "reminder_is_set", None) is False:
         event["reminder_minutes"] = None
+    url = getattr(item, "event_url", None)
+    if isinstance(url, str):
+        event["url"] = url
     # Only the organizer's copy says whether the invitations went out.
     if my_response == "Organizer" and event["attendees"]:
         event["invitations_sent"] = bool(getattr(item, "meeting_request_was_sent", False))

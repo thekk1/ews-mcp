@@ -1892,3 +1892,27 @@ def test_draft_fetches_use_explicit_projections_excluding_mime_content(tmp_path)
     for projection in account.fetch_projections:
         assert isinstance(projection, list) and projection
         assert "mime_content" not in projection
+
+
+def test_create_event_url_and_clickable_links_in_body(tmp_path, monkeypatch):
+    account = make_account()
+    ctx = make_ctx(tmp_path, account)
+    monkeypatch.setattr(writes, "CalendarItem", FakeCalendarItem)
+    link = "https://example.test/m?a=1&b=2"
+    res = call(ctx, "create_event", {"subject": "Sync", "start": "2026-07-01",
+                                     "end": "2026-07-01T01:00", "location": "Teams",
+                                     "url": link, "body": f"Topic <x>\nURL: {link}"})
+    item = FakeCalendarItem.last
+    assert res["url"] == link and item.event_url == link and item.location == "Teams"
+    escaped = link.replace("&", "&amp;")
+    assert f'<a href="{escaped}">{escaped}</a>' in str(item.body)
+    assert "Topic &lt;x&gt;" in str(item.body)
+
+
+def test_event_url_must_be_http(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path, make_account())
+    monkeypatch.setattr(writes, "CalendarItem", FakeCalendarItem)
+    for bad in ("Teams", "ftp://x.example/a", "https://x.example/a b"):
+        res = call(ctx, "create_event", {"subject": "S", "start": "2026-07-01",
+                                         "end": "2026-07-01T01:00", "url": bad})
+        assert res["ok"] is False and res["error"]["code"] == "validation"
