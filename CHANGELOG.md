@@ -25,6 +25,15 @@
   or expired token (`exp` within 30 s) gets HTTP 401 with
   `WWW-Authenticate` from `/mcp` and `/api/tools/*`, so MCP clients start
   OAuth or refresh. `MCP_API_KEY` is then sent as `X-API-Key`.
+- `v5`: multi-user mode and rejected credentials: new credentials for a
+  user with a session are tried next to it and replace it only after a
+  call succeeded; rejections per mailbox are capped
+  (`EWS_AUTH_MAX_REJECTIONS` within `EWS_AUTH_FAILURE_COOLDOWN_SECONDS`)
+  before new credentials reach Exchange; `auth_failed` tells the caller
+  to correct the credentials in the client instead of asking for a
+  restart; evicting a user closes only that user's protocol;
+  impersonation refuses an `X-EWS-Email` that is not exactly one
+  `name@domain`; `EWS_ACCESS_TOKEN` in the environment is refused.
 - `v5`: Inbox rules (mail filters) — `list_rules`/`create_rule`/
   `update_rule`/`delete_rule`, 34 tools total (was 30). exchangelib
   implements neither `GetInboxRules` nor `UpdateInboxRules`, so

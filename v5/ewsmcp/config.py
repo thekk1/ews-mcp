@@ -51,7 +51,9 @@ class Settings(BaseSettings):
     # account's management scope allows (scope it in Exchange as well).
     ews_impersonation_allowed_domains: str = ""
     # token mode only: set per request on the per-user copy of these
-    # settings (multiuser.py), not meant to come from the environment.
+    # settings (multiuser.py, model_copy without validation). Refused at
+    # construction, so EWS_ACCESS_TOKEN in the environment cannot switch a
+    # server to bearer auth.
     ews_access_token: Optional[str] = None
     ews_access_token_expires_at: Optional[float] = None
     # Auto-negotiation is the default because it adapts to what the server
@@ -127,6 +129,12 @@ class Settings(BaseSettings):
                 "EWS_EMAIL is required unless EWS_MULTI_USER=true — in "
                 "multi-user mode each request supplies its own identity via "
                 "the X-EWS-Email/X-EWS-Password headers instead."
+            )
+        if self.ews_access_token or self.ews_access_token_expires_at:
+            raise ValueError(
+                "EWS_ACCESS_TOKEN/EWS_ACCESS_TOKEN_EXPIRES_AT are request state: in "
+                "EWS_MULTI_USER_AUTH=token mode each request brings its own token. "
+                "Remove them from the environment."
             )
         if self.ews_multi_user and self.ews_multi_user_auth == "impersonation":
             if not self.ews_username or not self.ews_password:

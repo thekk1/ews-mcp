@@ -174,8 +174,15 @@ A request without both headers gets a clean `auth_failed` (401), not a
 tool error. Credentials are never persisted: each (email, password) pair
 resolves to a short-lived per-user Exchange session (`EWSGateway`),
 cached in memory only for reuse across that user's own calls (bounded to
-64 users, idle-evicted after 15 minutes; a changed password rebuilds
-rather than reusing the old session) and torn down on eviction. Because
+64 users, idle-evicted after 15 minutes) and torn down on eviction.
+New credentials for a user who already has a session are tried in a
+second context next to it, which replaces the session only after a call
+on it has succeeded: a request with someone's address and a wrong
+password neither drops their session nor gets resent (each context has
+the authentication breaker above). After `EWS_AUTH_MAX_REJECTIONS`
+rejections for one mailbox within `EWS_AUTH_FAILURE_COOLDOWN_SECONDS`,
+new credentials for it are refused without asking Exchange until the
+window has passed; credentials that already work keep working. Because
 identity is now per-request, this mode also turns off everything that
 would otherwise mix data between users: no cache mirror, no audit log,
 no alias DB, no semantic index — every read is a live EWS call. Short

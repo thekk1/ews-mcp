@@ -29,6 +29,15 @@ AUTH_FAILED_HINT = (
     "configuration, and restart the server."
 )
 
+# Multi-user mode: the credentials come with each request, so the user
+# corrects them in the client and the next call uses them; no restart.
+MULTI_USER_AUTH_FAILED_HINT = (
+    "Retrying will not help: Exchange rejected the e-mail address or "
+    "password sent with this request, and repeated failures risk locking "
+    "the account. Correct them in the client's settings for this server; "
+    "the next call uses the new values."
+)
+
 _AUTH_STATUS_RE = re.compile(
     r"\bunauthorized\b|\bhttp\s+401\b|\bstatus(?:\s+code)?[:=\s]+401\b"
 )

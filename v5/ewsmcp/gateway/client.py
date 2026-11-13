@@ -40,7 +40,7 @@ from exchangelib.protocol import (
 )
 
 from ..config import Settings
-from ..errors import AUTH_FAILED_HINT, ToolError
+from ..errors import AUTH_FAILED_HINT, MULTI_USER_AUTH_FAILED_HINT, ToolError
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +199,11 @@ class AuthBreaker:
         cooldown_seconds: int = 900,
         max_rejections: int = 3,
         clock: Optional[Callable[[], float]] = None,
+        hint: str = AUTH_FAILED_HINT,
+        reopens_on: str = "restart",
     ):
+        self._hint = hint
+        self._reopens_on = reopens_on
         self._cooldown = max(0, int(cooldown_seconds))
         self._max_rejections = max(1, int(max_rejections))
         self._clock = clock
@@ -229,8 +233,8 @@ class AuthBreaker:
             return ToolError(
                 "auth_failed",
                 f"Exchange rejected credentials {self._rejections} time(s); "
-                "authentication circuit breaker is permanently open until restart.",
-                hint=AUTH_FAILED_HINT,
+                f"authentication circuit breaker is permanently open until {self._reopens_on}.",
+                hint=self._hint,
                 retry_after_s=None,
             )
         remaining = 0
@@ -240,7 +244,7 @@ class AuthBreaker:
             "auth_failed",
             f"Exchange rejected credentials ({self._rejections}/{self._max_rejections}); "
             f"authentication circuit breaker is open for {remaining}s.",
-            hint=AUTH_FAILED_HINT,
+            hint=self._hint,
             retry_after_s=remaining,
         )
 
@@ -353,6 +357,10 @@ class EWSGateway:
             cooldown_seconds=settings.ews_auth_failure_cooldown_seconds,
             max_rejections=settings.ews_auth_max_rejections,
             clock=clock,
+            # Multi-user: this gateway holds one request's credentials; new
+            # ones get a new gateway (multiuser.py), not a restart.
+            **({"hint": MULTI_USER_AUTH_FAILED_HINT, "reopens_on": "the credentials change"}
+               if settings.ews_multi_user else {}),
         )
         self._account: Optional[Account] = None
         self._account_lock = threading.Lock()
@@ -361,6 +369,9 @@ class EWSGateway:
             thread_name_prefix="ews",
         )
         self.last_connection_error: Optional[str] = None
+        # True once a call completed without a 401: these credentials work.
+        # Multi-user mode only replaces a user's session with that proof.
+        self.authenticated = False
         self._folder_cache: Dict[str, Any] = {}
         self._folder_cache_ts = 0.0
         if settings.ews_insecure_skip_verify:
@@ -369,6 +380,10 @@ class EWSGateway:
 
     def _now(self) -> float:
         return float(self._clock()) if self._clock is not None else time.time()
+
+    def add_rejection_listener(self, callback: Callable[[], None]) -> None:
+        """Call ``callback`` after every credential rejection of this gateway."""
+        self._breaker.add_rejection_listener(callback)
 
     def auth_status(self) -> Dict[str, Any]:
         """Thread-safe snapshot of the authentication circuit breaker."""
@@ -498,20 +513,36 @@ class EWSGateway:
         """Tear down this gateway for good (multi-user eviction only —
         the process-wide single-mailbox gateway just lives until exit).
 
-        Under impersonation every per-user gateway runs on the same
-        service-account credentials, so exchangelib hands them all the same
-        cached Protocol: closing it, or clearing the protocol cache, would
-        cut the sessions of every other user. Only this gateway's own
-        account and folder cache go then.
+        Never ``reset()``: ``CachingProtocol.clear_cache()`` is process-wide
+        and would close the idle sessions of every other user. Under
+        impersonation every per-user gateway runs on the same service-account
+        credentials and so on the same cached Protocol, which stays as it is;
+        only this gateway's account and folder cache go. With per-user
+        credentials this gateway's own Protocol is closed and only its own
+        entry leaves the protocol cache.
         """
-        if self.settings.impersonation:
-            with self._account_lock:
-                self._account = None
-            self._folder_cache.clear()
-            self._folder_cache_ts = 0.0
-        else:
-            self.reset()
+        with self._account_lock:
+            account, self._account = self._account, None
+        self._folder_cache.clear()
+        self._folder_cache_ts = 0.0
+        if account is not None and not self.settings.impersonation:
+            self._drop_protocol(getattr(account, "protocol", None))
         self._pool.shutdown(wait=False, cancel_futures=True)
+
+    @staticmethod
+    def _drop_protocol(protocol: Any) -> None:
+        config = getattr(protocol, "config", None)
+        if config is None:
+            return
+        try:
+            key = CachingProtocol._cache_key(config)
+            with CachingProtocol._protocol_cache_lock:
+                cached = CachingProtocol._protocol_cache.get(key)
+                if cached is not None and cached[0] is protocol:
+                    del CachingProtocol._protocol_cache[key]
+            protocol.close()
+        except Exception as e:
+            logger.debug("closing this gateway's protocol failed: %s", e)
 
     def test_connection(self) -> bool:
         """Real network probe — must round-trip on EVERY call.
@@ -546,6 +577,7 @@ class EWSGateway:
                 raise self._breaker.current_error()
             self._breaker.record_success()
             self.last_connection_error = None
+            self.authenticated = True
             claim_released = True
             return True
         except ToolError as err:
@@ -644,6 +676,7 @@ class EWSGateway:
                     err = self._handle_swallowed_auth_rejection(tbrk_before)
                     claim_released = True
                     raise err
+                self.authenticated = True
                 return out
             finally:
                 if claimed and not claim_released:

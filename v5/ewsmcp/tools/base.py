@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 from ..confirm import consume_token, content_hash, make_token, verify_token
-from ..errors import AUTH_FAILED_HINT, ToolError, map_exception
+from ..errors import AUTH_FAILED_HINT, MULTI_USER_AUTH_FAILED_HINT, ToolError, map_exception
 
 TIER_RANK = {"read": 0, "draft": 1, "full": 2}
 CLASS_TIER = {"read": "read", "write": "draft", "send": "full", "destructive": "full"}
@@ -163,6 +163,14 @@ def _recipient_guard(ctx: Context, kwargs: Dict[str, Any]) -> None:
         if allow and not any(fnmatch.fnmatch(r, p) for p in allow):
             raise ToolError("recipient_blocked",
                             f"recipient '{r}' is not allowlisted (EWS_RECIPIENT_ALLOWLIST)")
+
+
+def _for_caller(ctx: Context, err: ToolError) -> ToolError:
+    """In multi-user mode the caller, not the operator, fixes rejected
+    credentials: give an auth_failed the hint for that."""
+    if err.code == "auth_failed" and err.hint == AUTH_FAILED_HINT and ctx.settings.ews_multi_user:
+        err.hint = MULTI_USER_AUTH_FAILED_HINT
+    return err
 
 
 def _rate_guard(ctx: Context) -> None:
@@ -419,7 +427,7 @@ async def dispatch(ctx: Context, spec: ToolSpec, kwargs: Dict[str, Any],
         return result
     except ToolError as err:
         outcome = err.code
-        return err.to_dict()
+        return _for_caller(ctx, err).to_dict()
     except (TypeError, ValueError) as exc:
         # Handler contract violations (wrong kwarg names/types) are caller
         # errors, not upstream failures — never report them as 502s.
@@ -436,7 +444,7 @@ async def dispatch(ctx: Context, spec: ToolSpec, kwargs: Dict[str, Any],
             if ctx._circuit_failures >= ctx.settings.circuit_failure_threshold:
                 ctx._circuit_open_until = time.time() + ctx.settings.circuit_open_seconds
                 ctx._circuit_failures = 0
-        return err.to_dict()
+        return _for_caller(ctx, err).to_dict()
     finally:
         ctx.bump(f"tool.{spec.name}")
         if outcome != "ok":

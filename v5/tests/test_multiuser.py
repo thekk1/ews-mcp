@@ -5,6 +5,7 @@ Context cache (multiuser.py), plus the config/transport guards around it.
 import base64 as _b64
 import json as _json
 import time
+from types import SimpleNamespace
 
 import pytest
 from starlette.datastructures import Headers
@@ -12,7 +13,7 @@ from starlette.datastructures import Headers
 from conftest import make_settings
 
 from ewsmcp.config import Settings
-from ewsmcp.errors import ToolError
+from ewsmcp.errors import AUTH_FAILED_HINT, MULTI_USER_AUTH_FAILED_HINT, ToolError
 from ewsmcp.http import build_app
 from ewsmcp.multiuser import (
     EMAIL_HEADER,
@@ -22,7 +23,7 @@ from ewsmcp.multiuser import (
     extract_credentials_from_request,
 )
 from ewsmcp.server import build_context, start_connection_manager
-from ewsmcp.tools.base import Context
+from ewsmcp.tools.base import Context, _for_caller
 
 
 def _asgi_headers(pairs):
@@ -419,3 +420,133 @@ def test_token_mode_api_key_via_x_api_key(tmp_path):
     assert status == 401  # API key gate: no X-API-Key
     status, headers = _drive(app, "/mcp", [("Authorization", expired), ("X-API-Key", "k")])
     assert status == 401 and b"invalid_token" in headers[b"www-authenticate"]
+
+
+# --------------------------------------------------------------- rejected credentials
+
+
+def _cache(tmp_path, **overrides):
+    settings = make_settings(ews_multi_user=True, ews_email=None, mcp_transport="http",
+                             **overrides)
+    return UserContextCache(build_context(settings))
+
+
+def test_multi_user_auth_failed_tells_the_caller_to_fix_the_credentials(tmp_path):
+    cache = _cache(tmp_path, ews_auth_max_rejections=1)
+    ctx = cache.get("a@b.com", "wrong")
+    err = ctx.gateway._breaker.record_rejection()
+    assert err.hint == MULTI_USER_AUTH_FAILED_HINT
+    assert "until the credentials change" in err.message
+    mapped = _for_caller(ctx, ToolError("auth_failed", "401", hint=AUTH_FAILED_HINT))
+    assert mapped.hint == MULTI_USER_AUTH_FAILED_HINT
+
+
+def test_single_mailbox_keeps_the_operator_hint(tmp_path):
+    ctx = build_context(make_settings())
+    assert ctx.gateway._breaker.record_rejection().hint == AUTH_FAILED_HINT
+    mapped = _for_caller(ctx, ToolError("auth_failed", "401", hint=AUTH_FAILED_HINT))
+    assert mapped.hint == AUTH_FAILED_HINT
+
+
+def test_wrong_password_does_not_drop_the_users_session(tmp_path):
+    cache = _cache(tmp_path)
+    live = cache.get("a@b.com", "right")
+    live.gateway.authenticated = True
+    live.aliaser.alias_for("RAW-1", "m")
+    closed = []
+    live.gateway.close = lambda: closed.append(live)
+    candidate = cache.get("a@b.com", "wrong")
+    assert candidate is not live
+    assert cache._entries["a@b.com"][0] is live
+    assert closed == []
+    assert cache.get("a@b.com", "right") is live  # session and aliases intact
+    assert cache.get("a@b.com", "wrong") is candidate  # not rebuilt, not resubmitted
+
+
+def test_new_password_replaces_the_session_once_it_worked(tmp_path):
+    cache = _cache(tmp_path)
+    old = cache.get("a@b.com", "old")
+    closed = []
+    old.gateway.close = lambda: closed.append(old)
+    new = cache.get("a@b.com", "new")
+    assert cache._entries["a@b.com"][0] is old
+    new.gateway.authenticated = True
+    assert cache.get("a@b.com", "new") is new
+    assert cache._entries["a@b.com"][0] is new
+    assert "a@b.com" not in cache._candidates
+    assert closed == [old]
+
+
+def test_rejections_per_mailbox_stop_trying_new_credentials(tmp_path):
+    cache = _cache(tmp_path, ews_auth_max_rejections=2)
+    first = cache.get("a@b.com", "pw1")
+    first.gateway._breaker.record_rejection()
+    second = cache.get("a@b.com", "pw2")
+    second.gateway._breaker.record_rejection()
+    built = []
+    real_build = cache._build
+    cache._build = lambda email, password: built.append(email) or real_build(email, password)
+    with pytest.raises(ToolError) as exc:
+        cache.get("a@b.com", "pw3")
+    assert exc.value.code == "auth_failed"
+    assert exc.value.retry_after_s and exc.value.retry_after_s > 0
+    assert built == []  # nothing reached Exchange
+    assert cache.get("a@b.com", "pw1") is first  # known credentials still answer
+    cache.get("c@b.com", "pw")  # other mailboxes are unaffected
+    assert built == ["c@b.com"]
+
+
+def test_rejection_window_passes(tmp_path, monkeypatch):
+    cache = _cache(tmp_path, ews_auth_max_rejections=1, ews_auth_failure_cooldown_seconds=60)
+    cache.get("a@b.com", "pw1").gateway._breaker.record_rejection()
+    with pytest.raises(ToolError):
+        cache.get("a@b.com", "pw2")
+    later = time.time() + 61
+    monkeypatch.setattr(time, "time", lambda: later)
+    assert cache.get("a@b.com", "pw2") is not None
+
+
+def test_close_drops_only_its_own_protocol(tmp_path, monkeypatch):
+    from exchangelib.protocol import CachingProtocol
+    cache = _cache(tmp_path)
+    ctx = cache.get("a@b.com", "pw")
+
+    class _Protocol:
+        def __init__(self, user):
+            self.config = SimpleNamespace(service_endpoint="https://mail.corp.example/EWS",
+                                          credentials=user)
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    mine, other = _Protocol("a"), _Protocol("b")
+    cleared = []
+    monkeypatch.setattr(CachingProtocol, "clear_cache", classmethod(lambda cls: cleared.append(1)))
+    keys = [CachingProtocol._cache_key(p.config) for p in (mine, other)]
+    for key, protocol in zip(keys, (mine, other)):
+        CachingProtocol._protocol_cache[key] = (protocol, None)
+    try:
+        ctx.gateway._account = SimpleNamespace(protocol=mine)
+        ctx.gateway.close()
+        assert mine.closed and not other.closed
+        assert keys[0] not in CachingProtocol._protocol_cache
+        assert CachingProtocol._protocol_cache[keys[1]][0] is other
+        assert cleared == []
+    finally:
+        for key in keys:
+            CachingProtocol._protocol_cache.pop(key, None)
+
+
+@pytest.mark.parametrize("value", ["corp.example", "a@evil.example@corp.example", "@corp.example"])
+def test_impersonation_refuses_malformed_mailboxes(value):
+    allowed = frozenset({"corp.example"})
+    with pytest.raises(ToolError) as exc:
+        extract_credentials_from_asgi_headers(_asgi_headers([(EMAIL_HEADER, value)]), True, allowed)
+    assert exc.value.code == "validation"
+
+
+def test_access_token_cannot_come_from_the_environment(monkeypatch):
+    monkeypatch.setenv("EWS_ACCESS_TOKEN", "from-env")
+    with pytest.raises(ValueError, match="request state"):
+        make_settings()

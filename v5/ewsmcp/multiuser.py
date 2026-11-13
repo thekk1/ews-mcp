@@ -36,12 +36,13 @@ import binascii
 import hashlib
 import json
 import logging
+import math
 import threading
 import time
-from collections import OrderedDict
-from typing import Optional, Tuple
+from collections import OrderedDict, deque
+from typing import Deque, Dict, Optional, Tuple
 
-from .errors import ToolError
+from .errors import MULTI_USER_AUTH_FAILED_HINT, ToolError
 from .gateway.client import EWSGateway
 from .ids import MemoryAliaser
 from .tools.base import Context
@@ -100,7 +101,13 @@ def _require_mailbox(email: Optional[str], password: Optional[str],
                  f"{EMAIL_HEADER} header on every request.",
         )
     email = email.strip().lower()
-    domain = email.rpartition("@")[2]
+    local, _, domain = email.partition("@")
+    if not local or not domain or "@" in domain:
+        raise ToolError(
+            "validation",
+            f"{EMAIL_HEADER} is not a mailbox address",
+            hint=f"Send exactly one address of the form name@domain in {EMAIL_HEADER}.",
+        )
     if allowed_domains and domain not in allowed_domains:
         raise ToolError(
             "forbidden",
@@ -242,8 +249,19 @@ class UserContextCache:
     """Bounded, idle-evicting cache of per-user ``Context`` objects.
 
     Keyed by lowercased email. The password is never used as the key
-    (only hashed, for change detection) — a password change evicts and
-    rebuilds rather than silently reusing a gateway built with the old one.
+    (only hashed, for change detection).
+
+    New credentials for a mailbox that already has a session get a
+    *candidate* context next to it. The candidate replaces the session only
+    once a call on it has completed without a 401; until then the session
+    stays as it is, so a request carrying someone's address and a wrong
+    password cannot drop that user's session or alias map. Rejections are
+    counted per mailbox across all of its contexts: after
+    ``EWS_AUTH_MAX_REJECTIONS`` within ``EWS_AUTH_FAILURE_COOLDOWN_SECONDS``
+    no further new credentials for that mailbox are tried until the window
+    has passed, so varying passwords cannot run up the account's lockout
+    counter either. Each context's own breaker already stops the same
+    rejected credentials from being sent again.
     """
 
     def __init__(self, template: Context, max_size: int = MAX_CACHED_USERS,
@@ -252,11 +270,16 @@ class UserContextCache:
         self._max_size = max_size
         self._idle_evict_seconds = idle_evict_seconds
         self._entries: "OrderedDict[str, Tuple[Context, str, float]]" = OrderedDict()
+        self._candidates: "OrderedDict[str, Tuple[Context, str, float]]" = OrderedDict()
         self._lock = threading.Lock()
+        self._rejections: Dict[str, Deque[float]] = {}
+        self._rejections_lock = threading.Lock()
         settings = template.settings
         self.impersonation = settings.impersonation
         self.token_auth = settings.token_auth
         self.allowed_domains = settings.impersonation_domains
+        self._rejection_window = settings.ews_auth_failure_cooldown_seconds
+        self._max_rejections = settings.ews_auth_max_rejections
 
     def credentials_from_asgi_headers(self, headers) -> Tuple[str, Optional[str]]:
         return extract_credentials_from_asgi_headers(
@@ -269,34 +292,90 @@ class UserContextCache:
     def get(self, email: str, password: Optional[str]) -> Context:
         # Impersonation: one service account for everybody, no per-user
         # password to detect changes of. Token mode: a refreshed token
-        # changes the hash and rebuilds the gateway with the new token.
+        # changes the hash and gets a candidate like a new password.
         pwd_hash = hashlib.sha256((password or "").encode()).hexdigest()
         now = time.time()
         with self._lock:
             self._evict_idle(now)
             entry = self._entries.get(email)
-            if entry is not None:
-                ctx, cached_hash, _ = entry
-                if cached_hash == pwd_hash:
-                    self._entries[email] = (ctx, cached_hash, now)
-                    self._entries.move_to_end(email)
-                    return ctx
-                logger.info("cached Exchange password changed for a user — rebuilding gateway")
-                ctx.gateway.close()
+            if entry is not None and entry[1] == pwd_hash:
+                return self._touch(self._entries, email, entry, now)
+            candidate = self._candidates.get(email)
+            if candidate is not None and candidate[1] == pwd_hash:
+                if candidate[0].gateway.authenticated:
+                    return self._promote(email, now)
+                return self._touch(self._candidates, email, candidate, now)
+            self._check_rejections(email, now)
             ctx = self._build(email, password)
-            self._entries[email] = (ctx, pwd_hash, now)
-            self._entries.move_to_end(email)
-            while len(self._entries) > self._max_size:
-                _, (evicted, _, _) = self._entries.popitem(last=False)
-                evicted.gateway.close()
+            ctx.gateway.add_rejection_listener(lambda: self._record_rejection(email))
+            if entry is None:
+                self._entries[email] = (ctx, pwd_hash, now)
+                self._entries.move_to_end(email)
+                self._trim(self._entries)
+            else:
+                logger.info("new Exchange credentials for a cached user — trying them "
+                            "next to the current session")
+                if candidate is not None:
+                    candidate[0].gateway.close()
+                self._candidates[email] = (ctx, pwd_hash, now)
+                self._candidates.move_to_end(email)
+                self._trim(self._candidates)
             return ctx
 
+    @staticmethod
+    def _touch(table, email: str, entry, now: float) -> Context:
+        ctx, pwd_hash, _ = entry
+        table[email] = (ctx, pwd_hash, now)
+        table.move_to_end(email)
+        return ctx
+
+    def _promote(self, email: str, now: float) -> Context:
+        ctx, pwd_hash, _ = self._candidates.pop(email)
+        old = self._entries.pop(email, None)
+        if old is not None:
+            old[0].gateway.close()
+        logger.info("new Exchange credentials for a cached user work — replacing the session")
+        self._entries[email] = (ctx, pwd_hash, now)
+        self._entries.move_to_end(email)
+        return ctx
+
+    def _trim(self, table) -> None:
+        while len(table) > self._max_size:
+            _, (evicted, _, _) = table.popitem(last=False)
+            evicted.gateway.close()
+
+    def _record_rejection(self, email: str) -> None:
+        with self._rejections_lock:
+            self._rejections.setdefault(email, deque()).append(time.time())
+
+    def _check_rejections(self, email: str, now: float) -> None:
+        with self._rejections_lock:
+            times = self._rejections.get(email)
+            if not times:
+                return
+            while times and now - times[0] >= self._rejection_window:
+                times.popleft()
+            if not times:
+                del self._rejections[email]
+                return
+            if len(times) < self._max_rejections:
+                return
+            retry_after = max(1, math.ceil(self._rejection_window - (now - times[0])))
+        raise ToolError(
+            "auth_failed",
+            f"Exchange rejected {len(times)} sign-ins for this mailbox within "
+            f"{self._rejection_window}s; new credentials are not tried for {retry_after}s.",
+            hint=MULTI_USER_AUTH_FAILED_HINT,
+            retry_after_s=retry_after,
+        )
+
     def _evict_idle(self, now: float) -> None:
-        stale = [email for email, (_, _, seen) in self._entries.items()
-                if now - seen > self._idle_evict_seconds]
-        for email in stale:
-            ctx, _, _ = self._entries.pop(email)
-            ctx.gateway.close()
+        for table in (self._entries, self._candidates):
+            stale = [email for email, (_, _, seen) in table.items()
+                     if now - seen > self._idle_evict_seconds]
+            for email in stale:
+                ctx, _, _ = table.pop(email)
+                ctx.gateway.close()
 
     def _build(self, email: str, password: Optional[str]) -> Context:
         if self.token_auth:
