@@ -950,7 +950,7 @@ async def _create_event(ctx: Context, *, subject: str, start: str, end: str,
             "create_event with send_invitations=true is blocked: "
             "SEND_ENABLED=false on this server.",
             hint="Save the event without invitations: the attendees stay on it and "
-                 "the organizer can send it from Outlook. Or have the operator flip "
+                 "the organizer can send it from Outlook or Evolution. Or have the operator flip "
                  "SEND_ENABLED.",
         )
     start_dt = parse_when(start, "start", ctx.settings.ews_tz)
@@ -995,7 +995,11 @@ async def _create_event(ctx: Context, *, subject: str, start: str, end: str,
         result["invitations_pending"] = True
         result["note"] = (
             "Saved like a draft: the attendees are on the event, but nobody was invited. "
-            "The organizer can open it in Outlook and send it."
+            "The organizer sends it from their calendar program. Outlook: open the event, "
+            "for a series the whole series, then choose Send. Evolution with the Exchange "
+            "account: open the event, for a series all occurrences, change something small "
+            "and save; Exchange then invites all attendees without asking, and again on "
+            "every later save."
         )
     return result
 
@@ -1509,7 +1513,7 @@ TOOLS: List[ToolSpec] = [
             "Create a calendar event or, with recurrence, a recurring series. "
             "Default send_invitations=false saves it like a draft WITHOUT emailing "
             "attendees (no confirm needed): they stay on the event, and the organizer "
-            "can send it from Outlook. With send_invitations=true, invitations leave "
+            "can send it from Outlook or Evolution. With send_invitations=true, invitations leave "
             "the org: two-phase confirm + send kill-switch apply. Without "
             "reminder_minutes the event has no reminder."
         ),
