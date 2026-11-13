@@ -134,7 +134,7 @@ Read one attachment of a message. mode='info' → metadata only; 'text' → deco
 |---|---|---|---|
 | `message_id` | string | yes | Message id (m-alias or raw). |
 | `attachment` | string | no | Attachment name or zero-based index as a string (e.g. '0'). Optional only when the message has exactly one attachment. |
-| `mode` | string | no | (one of: `auto`, `info`, `text`, `save`; default `auto`) |
+| `mode` | string | no | (one of: `auto`, `info`, `text`, `file`, `save`; default `auto`) |
 
 #### `get_mailbox_overview` — read (min tier: read)
 
