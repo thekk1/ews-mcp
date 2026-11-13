@@ -13,7 +13,7 @@ the registry is the single source of truth for what exists.
 |---|---|---|---|
 | `list_folders` | read | read | List mail folders as a depth-limited tree walk. |
 | `search_messages` | read | read | Search mail. |
-| `check_messages` | read | read | Check a whole list of values against one mail folder in one call: which values occur as a whole word in a message subject (or in the sender name/address) and which are missing. |
+| `check_messages` | read | read | Check a whole list of values against a mail folder, or with folder=f:all the whole mailbox, in one call: which values occur as a whole word in a message subject (or in the sender name/address) and which are missing. |
 | `get_message` | read | read | Fetch one message by id (short alias from search results, e.g. |
 | `get_thread` | read | read | Rebuild the conversation containing the given message id: Inbox and Sent are merged and sorted chronologically, each entry's body cleaned to its latest-reply-only text. |
 | `get_attachment` | read | read | Read one attachment of a message. |
@@ -92,13 +92,14 @@ Search mail. TWO ENGINES, mutually exclusive: pass `query` (an Exchange AQS stri
 
 #### `check_messages` — read (min tier: read)
 
-Check a whole list of values against one mail folder in one call: which values occur as a whole word in a message subject (or in the sender name/address) and which are missing. Returns up to 5 matching cards per value. Use this instead of one search_messages call per value.
+Check a whole list of values against a mail folder, or with folder=f:all the whole mailbox, in one call: which values occur as a whole word in a message subject (or in the sender name/address) and which are missing. Returns up to 5 matching cards per value. Use this instead of one search_messages call per value.
 
 | parameter | type | required | description |
 |---|---|---|---|
 | `values` | string/array | yes | Values separated by commas or new lines, or an array of strings (a JSON array string is accepted too). At most 200. |
 | `field` | string | no | Where to look for each value (default subject). (one of: `subject`, `sender`) |
-| `folder` | string | no | Single mail folder alias, path, or raw id, e.g. f:inbox (default) or f:sent (f:all and recursive scopes are not supported). |
+| `folder` | string | no | Mail folder alias, path, or raw id, e.g. f:inbox (default) or f:sent, or f:all for all mail folders (without Deleted Items, Junk, Drafts and Outbox; each hit then names its folder). |
+| `recursive` | boolean | no | Also search the subfolders of `folder`. |
 | `since` | string | no | Received at or after (ISO date). |
 | `until` | string | no | Received at or before (ISO date). |
 | `only_missing` | boolean | no | Return only the values without a match. |

@@ -1309,36 +1309,37 @@ def test_search_fanout_slices_page_before_sender_filter_and_matches_single_folde
     assert rec_seen == single_seen
 
 
-def test_check_messages_rejects_f_all_and_recursive_scopes(tmp_path):
-    class _CountingGateway(_FakeGateway):
-        def __init__(self, account):
-            super().__init__(account)
-            self.calls = 0
-
-        async def call(self, fn):
-            self.calls += 1
-            return await super().call(fn)
-
+def test_check_messages_rejects_a_glob_folder(tmp_path):
     account = _account()
     account.mail_folders = [("Inbox", _Query([_neutral_msg("M1=", "RFP-1")]))]
     ctx = _ctx(tmp_path, account)
-    ctx.gateway = _CountingGateway(account)
+    res = _run(ctx, "check_messages", values=["RFP-1"], folder="Inbox/*")
+    assert res["ok"] is False
+    assert res["error"]["code"] == "validation"
 
-    for bad_folder in ("f:all", "F:ALL", "Inbox/*"):
-        res = _run(ctx, "check_messages", values=["RFP-1"], folder=bad_folder)
-        assert res["ok"] is False
-        assert res["error"]["code"] == "validation"
-        assert "single folder" in res["error"]["message"].lower()
 
-    with pytest.raises(ToolError) as exc_info:
-        asyncio.run(
-            mail_read._check_messages(
-                ctx, ["RFP-1"], folder="f:inbox", recursive=True,
-            )
-        )
-    assert exc_info.value.code == "validation"
-    assert "single folder" in exc_info.value.message.lower()
-    assert ctx.gateway.calls == 0
+def test_check_messages_whole_mailbox_names_the_folder(tmp_path):
+    inbox = _Query([_msg("A=", subject="RFP-1 offer", dt=datetime(2026, 6, 1, tzinfo=TZ))])
+    archive = _Query([_msg("B=", subject="RFP-2 offer", dt=datetime(2026, 6, 2, tzinfo=TZ)),
+                      _msg("C=", subject="RFP-123 offer", dt=datetime(2026, 6, 3, tzinfo=TZ))])
+    ctx = _whole_mailbox(tmp_path, {"Inbox": inbox, "Inbox/Archive": archive})
+    res = _run(ctx, "check_messages", values=["RFP-1", "RFP-2", "RFP-3"], folder="F:ALL")
+    assert res["ok"] is True
+    assert res["missing"] == ["RFP-3"]
+    assert [h["folder"] for h in res["found"]["RFP-1"]] == ["Inbox"]  # not RFP-123
+    assert [h["folder"] for h in res["found"]["RFP-2"]] == ["Inbox/Archive"]
+    assert res["folders_searched"] == 2 and "folders_failed" not in res
+    assert res["source"] == "live"
+
+
+def test_check_messages_whole_mailbox_reports_a_failed_folder(tmp_path):
+    broken = MagicMock(name="broken")
+    broken.filter.side_effect = RuntimeError("no access")
+    ctx = _whole_mailbox(tmp_path, {"Inbox": _Query([_msg("A=", subject="RFP-1")]),
+                                    "Secret": broken})
+    res = _run(ctx, "check_messages", values=["RFP-1"], folder="f:all")
+    assert res["found_count"] == 1
+    assert res["folders_failed"] == ["Secret"]
 
 
 def test_check_messages_cancels_siblings_on_first_failure(tmp_path):

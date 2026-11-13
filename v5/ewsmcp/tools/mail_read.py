@@ -947,6 +947,64 @@ def _row_from(row: Any) -> str:
     return f"{name} <{email}>" if name and name != email else email
 
 
+async def _check_messages_fan_out(ctx: Context, terms: List[str], field: str,
+                                  folder: str, recursive: bool,
+                                  since: Optional[str], until: Optional[str],
+                                  only_missing: bool) -> Dict[str, Any]:
+    """check_messages over several folders (`f:all` or `recursive`): one
+    multi-folder search_messages per value, at most four at a time, with the
+    same whole-word matching as a single folder. Always live (the mirror
+    covers only its configured folders)."""
+    tz = ctx.settings.ews_tz
+    since_dt = parse_when(since, "since", tz) if since else None
+    until_dt = parse_when(until, "until", tz) if until else None
+    gate = asyncio.Semaphore(4)
+    failed: set = set()
+    searched = 0
+
+    async def one(term: str) -> List[Dict[str, Any]]:
+        nonlocal searched
+        async with gate:
+            result = await _search_messages(
+                ctx, folder=folder, recursive=recursive, since=since, until=until,
+                limit=50, **({"subject": term} if field == "subject" else {"sender": term}))
+        searched = max(searched, int(result.get("folders_searched") or 0))
+        failed.update(result.get("folders_failed") or [])
+        hits: List[Dict[str, Any]] = []
+        for card in result.get("items") or []:
+            if field == "subject":
+                if not _word_match(term, card.get("subject", "")):
+                    continue
+            else:
+                if not _sender_match(term, card.get("from", "")):
+                    continue
+                if not _card_in_window(card, since_dt, until_dt):
+                    continue
+            hits.append({k: card.get(k) for k in ("id", "subject", "from", "date", "folder")})
+            if len(hits) >= CHECK_MAX_HITS:
+                break
+        return hits
+
+    tasks = [asyncio.create_task(one(term)) for term in terms]
+    try:
+        outcomes = await asyncio.gather(*tasks)
+    except BaseException:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+    found = {term: hits for term, hits in zip(terms, outcomes) if hits}
+    missing = [term for term in terms if term not in found]
+    out: Dict[str, Any] = {"values_checked": len(terms), "found_count": len(found),
+                           "missing_count": len(missing), "missing": missing,
+                           "folders_searched": searched}
+    if failed:
+        out["folders_failed"] = sorted(failed, key=str)
+    if not only_missing:
+        out["found"] = found
+    return _stamp(out, "live")
+
+
 async def _check_messages(ctx: Context, values: Any, field: str = "subject",
                           folder: str = "f:inbox", since: Optional[str] = None,
                           until: Optional[str] = None,
@@ -954,14 +1012,12 @@ async def _check_messages(ctx: Context, values: Any, field: str = "subject",
                           fresh: bool = False,
                           recursive: bool = False) -> Dict[str, Any]:
     norm_folder = (folder or "f:inbox").strip() or "f:inbox"
-    if (norm_folder.lower() == ALL_FOLDERS
-            or bool(recursive)
-            or norm_folder.endswith("/*")):
+    if norm_folder.endswith("/*"):
         raise ToolError(
             "validation",
-            "`check_messages` requires a single folder (`f:all` and recursive "
-            "scopes are not supported).",
-            hint="Pass a single folder such as `f:inbox` or `f:sent`.",
+            "`check_messages` takes a folder, `f:all` or `recursive=true`, "
+            "not a `/*` pattern.",
+            hint="Pass e.g. `f:inbox`, `f:all`, or a folder with recursive=true.",
         )
     terms = _parse_values(values)
     if not terms:
@@ -971,6 +1027,9 @@ async def _check_messages(ctx: Context, values: Any, field: str = "subject",
                         f"at most {CHECK_MAX_VALUES} values per call, got {len(terms)}.")
     if field not in ("subject", "sender"):
         raise ToolError("validation", "`field` must be 'subject' or 'sender'.")
+    if norm_folder.lower() == ALL_FOLDERS or bool(recursive):
+        return await _check_messages_fan_out(
+            ctx, terms, field, norm_folder, bool(recursive), since, until, only_missing)
 
     tz = ctx.settings.ews_tz if ctx is not None else "UTC"
     since_dt = parse_when(since, "since", tz) if since else None
@@ -1726,7 +1785,8 @@ TOOLS: List[ToolSpec] = [
     ToolSpec(
         name="check_messages",
         description=(
-            "Check a whole list of values against one mail folder in one call: "
+            "Check a whole list of values against a mail folder, or with "
+            "folder=f:all the whole mailbox, in one call: "
             "which values occur as a whole word in a message subject (or in the "
             "sender name/address) and which are missing. Returns up to 5 matching "
             "cards per value. Use this instead of one search_messages call per value."
@@ -1745,10 +1805,13 @@ TOOLS: List[ToolSpec] = [
                       "description": "Where to look for each value (default subject)."},
             "folder": {
                 "type": "string",
-                "description": "Single mail folder alias, path, or raw id, e.g. "
-                               "f:inbox (default) or f:sent (f:all and recursive "
-                               "scopes are not supported).",
+                "description": "Mail folder alias, path, or raw id, e.g. "
+                               "f:inbox (default) or f:sent, or f:all for all mail "
+                               "folders (without Deleted Items, Junk, Drafts and "
+                               "Outbox; each hit then names its folder).",
             },
+            "recursive": {"type": "boolean",
+                          "description": "Also search the subfolders of `folder`."},
             "since": {"type": "string", "description": "Received at or after (ISO date)."},
             "until": {"type": "string", "description": "Received at or before (ISO date)."},
             "only_missing": {"type": "boolean",

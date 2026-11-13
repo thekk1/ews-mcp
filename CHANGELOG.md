@@ -38,6 +38,10 @@
   with `forward_to`/`redirect_to` while `SEND_ENABLED=false`; they stay
   two-phase confirmed and recipient-guarded, and drafts and invitations
   still cannot be sent.
+- `v5`: `check_messages` takes `folder="f:all"` and `recursive=true`
+  again: one multi-folder search per value (live, at most four at a
+  time), each hit names its `folder`, and the result reports
+  `folders_searched` / `folders_failed`.
 - `v5`: Inbox rules (mail filters) — `list_rules`/`create_rule`/
   `update_rule`/`delete_rule`, 34 tools total (was 30). exchangelib
   implements neither `GetInboxRules` nor `UpdateInboxRules`, so
