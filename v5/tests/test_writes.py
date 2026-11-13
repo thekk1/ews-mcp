@@ -1916,3 +1916,16 @@ def test_event_url_must_be_http(tmp_path, monkeypatch):
         res = call(ctx, "create_event", {"subject": "S", "start": "2026-07-01",
                                          "end": "2026-07-01T01:00", "url": bad})
         assert res["ok"] is False and res["error"]["code"] == "validation"
+
+
+def test_rule_forward_switch_does_not_open_invitations(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path, make_account(), ews_rule_forward_enabled=True)
+    monkeypatch.setattr(writes, "CalendarItem", FakeCalendarItem)
+    FakeCalendarItem.last = None
+    kwargs = {"subject": "Board", "start": "2026-07-01T10:00",
+              "end": "2026-07-01T11:00", "attendees": ["x@ext.example"],
+              "send_invitations": True}
+    p1 = call(ctx, "create_event", kwargs)
+    p2 = call(ctx, "create_event", {**kwargs, "confirm_token": p1["confirm_token"]})
+    assert p2["error"]["code"] == "kill_switch"
+    assert FakeCalendarItem.last is None

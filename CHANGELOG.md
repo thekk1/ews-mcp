@@ -34,6 +34,10 @@
   restart; evicting a user closes only that user's protocol;
   impersonation refuses an `X-EWS-Email` that is not exactly one
   `name@domain`; `EWS_ACCESS_TOKEN` in the environment is refused.
+- `v5`: `EWS_RULE_FORWARD_ENABLED` (default `false`) allows Inbox rules
+  with `forward_to`/`redirect_to` while `SEND_ENABLED=false`; they stay
+  two-phase confirmed and recipient-guarded, and drafts and invitations
+  still cannot be sent.
 - `v5`: Inbox rules (mail filters) — `list_rules`/`create_rule`/
   `update_rule`/`delete_rule`, 34 tools total (was 30). exchangelib
   implements neither `GetInboxRules` nor `UpdateInboxRules`, so

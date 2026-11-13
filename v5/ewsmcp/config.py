@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     # --- Safety -------------------------------------------------------------
     ews_capability_tier: Literal["read", "draft", "full"] = "draft"
     send_enabled: bool = False  # kill-switch: v5 defaults SAFE (off)
+    # Inbox rules with forward_to/redirect_to only, without opening the
+    # send kill-switch for drafts and invitations. Still two-phase confirmed
+    # and subject to the recipient allow/denylist.
+    ews_rule_forward_enabled: bool = False
     send_confirm_secret: Optional[str] = None
     confirm_ttl_seconds: int = 600  # ONE default everywhere (== confirm.DEFAULT_TTL_SECONDS)
     ews_recipient_allowlist: str = ""

@@ -299,3 +299,18 @@ def test_delete_rule_two_phase_confirm_then_sends_delete_operation(tmp_path):
     op = FakeUpdateInboxRules.calls[0]
     assert op.tag == f"{{{TNS}}}DeleteRuleOperation"
     assert op.find(f"{{{TNS}}}RuleId").text == "RAW-DEL"
+
+
+def test_create_rule_forward_to_allowed_by_rule_forward_switch_alone(tmp_path):
+    ctx = make_ctx(tmp_path, make_account(), ews_capability_tier="draft",
+                   send_enabled=False, ews_rule_forward_enabled=True)
+    kwargs = {"display_name": "Forward", "forward_to": ["out@ext.com"]}
+
+    p1 = call(ctx, "create_rule", kwargs)
+    assert p1["requires_confirmation"] is True  # still two-phase
+    assert FakeUpdateInboxRules.calls == []
+
+    p2 = call(ctx, "create_rule", {**kwargs, "confirm_token": p1["confirm_token"]})
+    assert p2["ok"] is True
+    assert len(FakeUpdateInboxRules.calls) == 1
+

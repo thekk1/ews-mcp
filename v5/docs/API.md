@@ -419,7 +419,7 @@ _No parameters._
 
 #### `create_rule` — write (min tier: draft)
 
-Create an Inbox rule (mail filter). Omitting every condition matches EVERY incoming message — only do that deliberately. At least one action is required. forward_to/redirect_to leave the mailbox on every future match (a standing auto-send order, not a one-off send) — SEND_ENABLED must be true, and confirmation is required, same as delete/permanent_delete.
+Create an Inbox rule (mail filter). Omitting every condition matches EVERY incoming message — only do that deliberately. At least one action is required. forward_to/redirect_to leave the mailbox on every future match (a standing auto-send order, not a one-off send) — SEND_ENABLED or EWS_RULE_FORWARD_ENABLED must be true, and confirmation is required, same as delete/permanent_delete.
 
 > Two-phase confirm for some argument combinations: the first call returns a preview + `confirm_token`; repeat the call with the token to execute.
 
@@ -462,8 +462,8 @@ Create an Inbox rule (mail filter). Omitting every condition matches EVERY incom
 | `received_before` | string | no | Message must have been received on/before this date. Date grammar: 'today', '+Nd', YYYY-MM-DD, or an ISO datetime. |
 | `move_to_folder` | string | no | Move the message here (folder id, f:alias, or path). |
 | `copy_to_folder` | string | no | ALSO copy the message here. |
-| `forward_to` | array | no | Forward to these addresses. Leaves the mailbox on every future match — needs SEND_ENABLED=true and two-phase confirm. |
-| `redirect_to` | array | no | Redirect to these addresses (no copy kept locally, sender sees no change). Same SEND_ENABLED + confirm requirement as forward_to. |
+| `forward_to` | array | no | Forward to these addresses. Leaves the mailbox on every future match — needs SEND_ENABLED=true or EWS_RULE_FORWARD_ENABLED=true and two-phase confirm. |
+| `redirect_to` | array | no | Redirect to these addresses (no copy kept locally, sender sees no change). Same switch + confirm requirement as forward_to. |
 | `delete` | boolean | no | Move to Deleted Items. Needs confirm. |
 | `permanent_delete` | boolean | no | Delete with no Deleted Items copy — unrecoverable. Needs confirm. |
 | `mark_as_read` | boolean | no |  |
@@ -516,8 +516,8 @@ Replace an EXISTING Inbox rule wholesale (like create_rule, targeting rule_id fr
 | `received_before` | string | no | Message must have been received on/before this date. Date grammar: 'today', '+Nd', YYYY-MM-DD, or an ISO datetime. |
 | `move_to_folder` | string | no | Move the message here (folder id, f:alias, or path). |
 | `copy_to_folder` | string | no | ALSO copy the message here. |
-| `forward_to` | array | no | Forward to these addresses. Leaves the mailbox on every future match — needs SEND_ENABLED=true and two-phase confirm. |
-| `redirect_to` | array | no | Redirect to these addresses (no copy kept locally, sender sees no change). Same SEND_ENABLED + confirm requirement as forward_to. |
+| `forward_to` | array | no | Forward to these addresses. Leaves the mailbox on every future match — needs SEND_ENABLED=true or EWS_RULE_FORWARD_ENABLED=true and two-phase confirm. |
+| `redirect_to` | array | no | Redirect to these addresses (no copy kept locally, sender sees no change). Same switch + confirm requirement as forward_to. |
 | `delete` | boolean | no | Move to Deleted Items. Needs confirm. |
 | `permanent_delete` | boolean | no | Delete with no Deleted Items copy — unrecoverable. Needs confirm. |
 | `mark_as_read` | boolean | no |  |

@@ -356,6 +356,7 @@ mcpServers:
 | `CIRCUIT_OPEN_SECONDS` | `60` | Seconds the dispatcher circuit fast-fails with `upstream_unavailable` once tripped |
 | `EWS_CAPABILITY_TIER` | `draft` | `read` ⊂ `draft` ⊂ `full` — above-tier tools are unregistered and refused at dispatch |
 | `SEND_ENABLED` | `false` | Global send kill-switch (blocks `send`-class tools and attendee-notifying calendar writes) |
+| `EWS_RULE_FORWARD_ENABLED` | `false` | Allow Inbox rules with `forward_to`/`redirect_to` while `SEND_ENABLED=false` (still two-phase confirmed and recipient-guarded) |
 | `SEND_CONFIRM_SECRET` | `None` | HMAC secret for confirm tokens; random per-process when unset (set to survive restarts) |
 | `CONFIRM_TTL_SECONDS` | `600` | Confirm token lifetime in seconds |
 | `EWS_RECIPIENT_ALLOWLIST` | `""` | Comma-separated address globs permitted on drafts, events, and `send_draft` (empty allows all) |

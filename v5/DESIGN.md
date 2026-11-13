@@ -67,7 +67,9 @@ Five packs (see the generated table in `docs/API.md`):
   a rule using one is never silently misrepresented. `forward_to`/
   `redirect_to` re-check `SEND_ENABLED` themselves (same exception as
   `create_event`'s invitations, §Safety) since a rule is a standing
-  auto-send order, not a one-off.
+  auto-send order, not a one-off. `EWS_RULE_FORWARD_ENABLED=true` allows
+  them without `SEND_ENABLED`, so a deployment can offer forwarding rules
+  while drafts and invitations still cannot leave the mailbox.
 - **semantic** (+1, only when enabled): `find_similar`.
 
 Every list-shaped result ships exactly the canonical envelope

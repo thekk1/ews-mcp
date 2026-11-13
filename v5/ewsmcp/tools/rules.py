@@ -12,7 +12,7 @@ move-to-folder rule stays usable without the full tier, but forward_to/
 redirect_to leave the mailbox on every future match — a standing
 auto-send order, not a one-off. The dispatcher's kill-switch only covers
 class "send", so _check_rule_send_kill_switch re-checks SEND_ENABLED
-itself when (and only when) forward_to/redirect_to is set, and confirm
+(or EWS_RULE_FORWARD_ENABLED, which opens only this) itself when (and only when) forward_to/redirect_to is set, and confirm
 is gated the same way (plus delete/permanent_delete, which are
 irreversible). update_rule replaces the rule WHOLESALE (matching EWS's
 own SetRuleOperation semantics) — it is deliberately not a partial patch.
@@ -69,13 +69,15 @@ def _normalize_conditions(ctx: Context, conditions: Dict[str, Any]) -> Dict[str,
 
 
 def _check_rule_send_kill_switch(ctx: Context, actions: Dict[str, Any], tool_name: str) -> None:
-    if (actions.get("forward_to") or actions.get("redirect_to")) and not ctx.settings.send_enabled:
+    s = ctx.settings
+    if (actions.get("forward_to") or actions.get("redirect_to")) and not (
+            s.send_enabled or s.ews_rule_forward_enabled):
         raise ToolError(
             "kill_switch",
-            f"{tool_name} with forward_to/redirect_to is blocked: "
-            "SEND_ENABLED=false on this server.",
+            f"{tool_name} with forward_to/redirect_to is blocked: SEND_ENABLED "
+            "and EWS_RULE_FORWARD_ENABLED are false on this server.",
             hint="Use a rule without forward_to/redirect_to, or have the "
-                 "operator flip SEND_ENABLED.",
+                 "operator set EWS_RULE_FORWARD_ENABLED=true.",
         )
 
 
@@ -254,10 +256,11 @@ def _action_props() -> Dict[str, Any]:
         "move_to_folder": {**_STR, "description": "Move the message here (folder id, f:alias, or path)."},
         "copy_to_folder": {**_STR, "description": "ALSO copy the message here."},
         "forward_to": {**_EMAILS, "description": ("Forward to these addresses. Leaves the mailbox on "
-                                                   "every future match — needs SEND_ENABLED=true and "
-                                                   "two-phase confirm.")},
+                                                   "every future match — needs SEND_ENABLED=true or "
+                                                   "EWS_RULE_FORWARD_ENABLED=true and two-phase "
+                                                   "confirm.")},
         "redirect_to": {**_EMAILS, "description": ("Redirect to these addresses (no copy kept locally, "
-                                                    "sender sees no change). Same SEND_ENABLED + confirm "
+                                                    "sender sees no change). Same switch + confirm "
                                                     "requirement as forward_to.")},
         "delete": {"type": "boolean", "description": "Move to Deleted Items. Needs confirm."},
         "permanent_delete": {"type": "boolean",
@@ -308,8 +311,8 @@ TOOLS: List[ToolSpec] = [
             "matches EVERY incoming message — only do that deliberately. At "
             "least one action is required. forward_to/redirect_to leave the "
             "mailbox on every future match (a standing auto-send order, not "
-            "a one-off send) — SEND_ENABLED must be true, and confirmation "
-            "is required, same as delete/permanent_delete."
+            "a one-off send) — SEND_ENABLED or EWS_RULE_FORWARD_ENABLED must "
+            "be true, and confirmation is required, same as delete/permanent_delete."
         ),
         side_effect_class="write",
         input_schema=_rule_schema(with_rule_id=False),
