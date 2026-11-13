@@ -756,6 +756,23 @@ def test_get_attachment_auto_on_binary_returns_info_with_hint(tmp_path):
     assert "save" in res["hint"]
 
 
+def test_get_attachment_file_mode_returns_base64(tmp_path):
+    import base64
+    item = _msg("RAW-A=", attachments=[
+        _att("contract.pdf", b"%PDF-\x00\x01", "application/pdf"),
+    ])
+    account = _account()
+    account.fetch = MagicMock(return_value=[item])
+    ctx = _ctx(tmp_path, account)
+    res = _run(ctx, "get_attachment", message_id="RAW-A=", mode="file")
+    assert res["ok"] is True
+    assert res["mode"] == "file"
+    assert res["filename"] == "contract.pdf"
+    assert res["mime_type"] == "application/pdf"
+    assert base64.b64decode(res["content_base64"]) == b"%PDF-\x00\x01"
+    assert not (tmp_path / "attachments").exists()
+
+
 def test_get_attachment_save_writes_sanitized_file(tmp_path):
     item = _msg("RAW-A=", attachments=[
         _att("quarterly report?.csv", b"a,b\n1,2\n", "text/csv"),

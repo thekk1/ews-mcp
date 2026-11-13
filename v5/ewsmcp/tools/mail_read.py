@@ -15,6 +15,7 @@ it never gates them.
 """
 
 import asyncio
+import base64
 import json
 import logging
 import re
@@ -156,6 +157,7 @@ _CHECK_PROJECTION = ("id", "subject", "sender", "datetime_received")
 _TEXT_EXTS = (".txt", ".csv", ".md", ".log", ".json")
 _TEXT_CAP = 20_000
 _SMIME_SNIFF_MAX_BYTES = 5 * 1024 * 1024
+_FILE_CAP = 25 * 1024 * 1024  # mode="file": bytes returned inline as base64
 
 
 # --------------------------------------------------------------------------
@@ -1428,7 +1430,8 @@ async def _get_attachment(ctx: Context, message_id: str,
                 chosen = "text" if _is_texty(name, content_type) else "info"
                 if chosen == "info":
                     out["hint"] = ("Binary attachment — metadata only. Call again "
-                                   "with mode='save' to write it to disk.")
+                                   "with mode='file' for the bytes as base64, or "
+                                   "mode='save' to write it to the server's disk.")
         if chosen == "info":
             out["mode"] = "info"
             return out
@@ -1452,6 +1455,19 @@ async def _get_attachment(ctx: Context, message_id: str,
                                "certificate/signature bytes around the readable "
                                "message content appear as � replacement "
                                "characters.")
+            return out
+        if chosen == "file":
+            if len(data) > _FILE_CAP:
+                raise ToolError(
+                    "validation",
+                    f"Attachment {name!r} is {len(data)} bytes, larger than "
+                    f"{_FILE_CAP}.",
+                    hint="Use mode='info'.",
+                )
+            out["mode"] = "file"
+            out["filename"] = name
+            out["mime_type"] = content_type or "application/octet-stream"
+            out["content_base64"] = base64.b64encode(data).decode("ascii")
             return out
         safe = re.sub(r"[^\w.\-]+", "_", name).strip("._") or "attachment.bin"
         dest = Path(ctx.settings.data_dir) / "attachments"
@@ -1800,7 +1816,9 @@ TOOLS: List[ToolSpec] = [
             "'text' → decoded UTF-8 text (capped at 20000 chars, `truncated` "
             "flagged) for text-like attachments (text/* content type or "
             ".txt/.csv/.md/.log/.json name); 'save' → write the bytes under "
-            "the server data dir and return saved_path; 'auto' (default) → "
+            "the server data dir and return saved_path; 'file' → the bytes as "
+            "content_base64 with filename and mime_type (at most 25 MB), to "
+            "pass the file on to another tool; 'auto' (default) → "
             "text when text-like, otherwise info plus a hint. An smime.p7m "
             "attachment (application/pkcs7-mime) is sniffed and reported as "
             "`smime_type: signed|enveloped` — signed is NOT encrypted (auto "
@@ -1821,7 +1839,8 @@ TOOLS: List[ToolSpec] = [
                                "(e.g. '0'). Optional only when the message has "
                                "exactly one attachment.",
             },
-            "mode": {"type": "string", "enum": ["auto", "info", "text", "save"],
+            "mode": {"type": "string",
+                     "enum": ["auto", "info", "text", "file", "save"],
                      "default": "auto"},
         }, required=["message_id"]),
         handler=_get_attachment,
