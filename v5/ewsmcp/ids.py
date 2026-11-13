@@ -70,6 +70,7 @@ _KIND_BY_KEY = {
     "conversation_id": "t",
     "thread_id": "t",
     "folder_id": "f",
+    "rule_id": "r",
 }
 
 
