@@ -134,7 +134,7 @@ class _FakeGateway:
 def _msg(raw_id, subject="Subj", sender="alice@corp.example", *, sender_name=None,
          dt=None, is_read=True, has_attachments=False, text_body="",
          conv="CONV-RAW-1=", message_id=None, attachments=None, to=None,
-         categories=None, flag_status=None):
+         categories=None, flag_status=None, item_class="IPM.Note"):
     return SimpleNamespace(
         id=raw_id,
         subject=subject,
@@ -152,6 +152,7 @@ def _msg(raw_id, subject="Subj", sender="alice@corp.example", *, sender_name=Non
         body=None,
         categories=list(categories) if categories is not None else None,
         flag_status=flag_status,
+        item_class=item_class,
     )
 
 
@@ -611,6 +612,25 @@ def test_get_message_concise_returns_card(tmp_path):
     assert res["ok"] is True
     assert res["message"]["snippet"] == "Hello."
     assert "body" not in res["message"]
+
+
+def test_card_names_the_kind_of_a_meeting_item(tmp_path):
+    from ewsmcp.dto import item_kind
+    invite = _msg("RAW-INV=", subject="TechTalk", item_class="IPM.Schedule.Meeting.Request")
+    account = _account()
+    account.fetch = MagicMock(return_value=[invite])
+    ctx = _ctx(tmp_path, account)
+    res = _run(ctx, "get_message", id="RAW-INV=", format="concise")
+    assert res["message"]["kind"] == "meeting_request"
+    plain = _msg("RAW-NOTE=")
+    account.fetch = MagicMock(return_value=[plain])
+    assert "kind" not in _run(ctx, "get_message", id="RAW-NOTE=", format="concise")["message"]
+    assert item_kind("IPM.Schedule.Meeting.Resp.Pos") == "meeting_response"
+    assert item_kind("IPM.Schedule.Meeting.Canceled") == "meeting_cancellation"
+    assert item_kind("IPM.Appointment") == "event"
+    assert item_kind("IPM.Note.SMIME.MultipartSigned") is None
+    assert item_kind("IPM.Schedule.Meeting.RequestX") is None
+    assert item_kind(None) is None
 
 
 def test_get_message_stale_id_maps_to_not_found(tmp_path):

@@ -147,7 +147,7 @@ def _row_full(ctx: Context, row: Any) -> Dict[str, Any]:
 _PROJECTION = (
     "id", "subject", "sender", "datetime_received", "is_read",
     "has_attachments", "text_body", "to_recipients", "conversation_id",
-    "message_id", "importance", "attachments",
+    "message_id", "importance", "attachments", "item_class",
 )
 
 # Slim FindItem-only projection for check_messages (avoids per-item GetItem
@@ -1703,7 +1703,10 @@ TOOLS: List[ToolSpec] = [
             "fetched page's sender email/name, so total_available is unknown "
             "when it is used. Results are compact cards, newest first; their "
             "`id` values are short aliases (m12) for get_message / get_thread / "
-            "get_attachment. If an id later goes stale (items move), re-run "
+            "get_attachment. A card of a meeting invitation, response or "
+            "cancellation or of a calendar item carries `kind` "
+            "(meeting_request, meeting_response, meeting_cancellation, event); "
+            "a mail has none. If an id later goes stale (items move), re-run "
             "this search for fresh ids."
         ),
         side_effect_class="read",

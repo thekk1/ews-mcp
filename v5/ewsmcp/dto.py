@@ -99,6 +99,26 @@ def sniff_smime_type(name: Optional[str], content_type: Optional[str],
     return None
 
 
+# Item classes that are no plain mail; a card of such an item says what it is, so a sent
+# invitation is not counted as a mail. Prefixes, longest first.
+_ITEM_KINDS = (
+    ("IPM.Schedule.Meeting.Request", "meeting_request"),
+    ("IPM.Schedule.Meeting.Resp", "meeting_response"),
+    ("IPM.Schedule.Meeting.Canceled", "meeting_cancellation"),
+    ("IPM.Appointment", "event"),
+)
+
+
+def item_kind(item_class: Any) -> Optional[str]:
+    """The kind of a non-mail item from its ItemClass, None for mail and unknown classes."""
+    if not isinstance(item_class, str):
+        return None
+    for prefix, kind in _ITEM_KINDS:
+        if item_class == prefix or item_class.startswith(prefix + "."):
+            return kind
+    return None
+
+
 def msg_card(item: Any, aliaser: IdAliaser, tz: str) -> Dict[str, Any]:
     """MsgCard: the ≤~60-token search/list unit."""
     text = getattr(item, "text_body", None) or ""
@@ -128,6 +148,9 @@ def msg_card(item: Any, aliaser: IdAliaser, tz: str) -> Dict[str, Any]:
     importance = str(getattr(item, "importance", "") or "")
     if importance.lower() == "high":
         card["importance"] = "high"
+    kind = item_kind(getattr(item, "item_class", None))
+    if kind:
+        card["kind"] = kind
     return card
 
 
