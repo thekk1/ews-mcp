@@ -667,8 +667,11 @@ async def _search_all_folders(
     }
 
 
+MAX_SEARCH_FOLDERS = 10
+
+
 async def _search_messages(ctx: Context, query: Optional[str] = None,
-                           folder: str = "f:inbox", sender: Optional[str] = None,
+                           folder: Optional[str] = None, sender: Optional[str] = None,
                            from_: Optional[str] = None,
                            subject: Optional[str] = None, since: Optional[str] = None,
                            until: Optional[str] = None, is_unread: Optional[bool] = None,
@@ -678,7 +681,30 @@ async def _search_messages(ctx: Context, query: Optional[str] = None,
                            flag_complete: Optional[bool] = None,
                            offset: int = 0, limit: int = 20,
                            mode: str = "keyword",
-                           fresh: bool = False) -> Dict[str, Any]:
+                           fresh: bool = False,
+                           folders: Optional[List[str]] = None) -> Dict[str, Any]:
+    if folders is not None:
+        if folder is not None:
+            raise ToolError("validation", "pass `folder` or `folders`, not both.")
+        if (not isinstance(folders, list) or not folders
+                or not all(isinstance(f, str) and f.strip() for f in folders)):
+            raise ToolError("validation", "`folders` must be a non-empty list of folders.")
+        if len(folders) > MAX_SEARCH_FOLDERS:
+            raise ToolError("validation", f"`folders` has {len(folders)} folders, at most "
+                            f"{MAX_SEARCH_FOLDERS} per call.")
+        same = dict(query=query, sender=sender, from_=from_, subject=subject, since=since,
+                    until=until, is_unread=is_unread, has_attachments=has_attachments,
+                    categories=categories, recursive=recursive, flag_complete=flag_complete,
+                    offset=offset, limit=limit, mode=mode, fresh=fresh)
+        results: List[Dict[str, Any]] = []
+        for one in dict.fromkeys(f.strip() for f in folders):
+            try:
+                results.append({"folder": one, **await _search_messages(ctx, folder=one, **same)})
+            except ToolError as exc:
+                results.append({"folder": one, "ok": False, "error": exc.code, "message": exc.message})
+        return {"ok": True, "count": len(results),
+                "failed": sum(1 for r in results if r.get("ok") is False), "results": results}
+    folder = folder or "f:inbox"
     offset = max(0, int(offset))
     limit = max(1, min(int(limit), 50))
     if mode == "semantic":
@@ -1233,9 +1259,110 @@ async def _check_messages(ctx: Context, values: Any, field: str = "subject",
 # --------------------------------------------------------------------------
 
 
-async def _get_message(ctx: Context, id: str, format: str = "full",
+MAX_BATCH_IDS = 50
+
+
+def _item_error(exc: BaseException) -> str:
+    """Short error of one item of a batch read."""
+    name = type(exc).__name__
+    if "NotFound" in name or "InvalidId" in name or "MalformedId" in name:
+        return "not_found"
+    if isinstance(exc, ToolError):
+        return exc.code
+    return name
+
+
+def _check_ids(id: Optional[str], ids: Optional[List[str]]) -> List[str]:
+    if id is not None:
+        raise ToolError("validation", "pass `id` or `ids`, not both.")
+    if not isinstance(ids, list) or not ids or not all(isinstance(i, str) and i for i in ids):
+        raise ToolError("validation", "`ids` must be a non-empty list of ids.")
+    if len(ids) > MAX_BATCH_IDS:
+        raise ToolError("validation", f"`ids` has {len(ids)} ids, at most {MAX_BATCH_IDS} per call.",
+                        hint="Split the list into several calls.")
+    return list(dict.fromkeys(ids))
+
+
+async def _get_messages(ctx: Context, ids: List[str], format: str,
+                        include_html: bool, fresh: bool) -> Dict[str, Any]:
+    """get_message with ids: mirrored messages from the mirror, the others with
+    one GetItem request for all of them (account.fetch with every id)."""
+    tz = ctx.settings.ews_tz
+    found: Dict[str, Dict[str, Any]] = {}
+    sources: Dict[str, str] = {}
+    if not fresh and not include_html and ctx.cache is not None:
+        for raw_id in ids:
+            try:
+                row = await asyncio.to_thread(ctx.cache.get_message, raw_id)
+            except Exception as exc:
+                logger.warning("cache get_message failed (%s) — live", exc)
+                row = None
+            if row is not None:
+                found[raw_id] = (_row_card(ctx, row) if format == "concise"
+                                 else _row_full(ctx, row))
+                sources[raw_id] = "cache"
+    live = [raw_id for raw_id in ids if raw_id not in found]
+    errors: Dict[str, str] = {}
+    if live:
+        only = list(_PROJECTION) if format == "concise" else None
+
+        def work(account: Any) -> List[Tuple[Any, Dict[int, str]]]:
+            out: List[Tuple[Any, Dict[int, str]]] = []
+            for fetched in account.fetch(ids=[(raw_id, None) for raw_id in live], only_fields=only):
+                smime_by_idx: Dict[int, str] = {}
+                if format != "concise" and not isinstance(fetched, Exception):
+                    for idx, att in enumerate(getattr(fetched, "attachments", None) or []):
+                        name = getattr(att, "name", f"attachment-{idx}")
+                        content_type = getattr(att, "content_type", None)
+                        if not is_pkcs7_candidate(name, content_type):
+                            continue
+                        size = getattr(att, "size", None)
+                        if isinstance(size, (int, float)) and size > _SMIME_SNIFF_MAX_BYTES:
+                            continue
+                        try:
+                            raw = _read_attachment_bytes(att)
+                        except Exception:
+                            raw = None
+                        kind = sniff_smime_type(name, content_type, raw)
+                        if kind:
+                            smime_by_idx[idx] = kind
+                out.append((fetched, smime_by_idx))
+            return out
+
+        results = await ctx.gateway.call(work)
+        for raw_id, (item, smime_by_idx) in zip(live, results):
+            if isinstance(item, Exception) or item is None:
+                errors[raw_id] = _item_error(item) if item is not None else "not_found"
+                continue
+            found[raw_id] = (msg_card(item, ctx.aliaser, tz, ctx.settings.ews_email)
+                             if format == "concise" else
+                             msg_full(item, ctx.aliaser, tz, ctx.settings.body_max_chars,
+                                      include_html=bool(include_html), smime_types=smime_by_idx))
+            sources[raw_id] = "live"
+        for raw_id in live[len(results):]:
+            errors[raw_id] = "not_found"
+    messages: List[Dict[str, Any]] = []
+    for raw_id in ids:
+        alias = ctx.aliaser.alias_for(raw_id, "m")
+        if raw_id in found:
+            messages.append({"id": alias, "message": found[raw_id], "source": sources[raw_id]})
+        else:
+            messages.append({"id": alias, "error": errors.get(raw_id, "not_found")})
+    failed = sum(1 for m in messages if "error" in m)
+    out: Dict[str, Any] = {"ok": True, "count": len(messages), "failed": failed, "messages": messages}
+    if failed:
+        out["hint"] = "not_found means the id went stale (items move); re-run search_messages for fresh ids."
+    return out
+
+
+async def _get_message(ctx: Context, id: Optional[str] = None, format: str = "full",
                        include_html: bool = False,
-                       fresh: bool = False) -> Dict[str, Any]:
+                       fresh: bool = False,
+                       ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    if ids is not None:
+        return await _get_messages(ctx, _check_ids(id, ids), format, include_html, fresh)
+    if not id:
+        raise ToolError("validation", "`id` (or `ids` for several messages) is required.")
     raw_id = id
     tz = ctx.settings.ews_tz
     # Mirror unless the caller needs live data: fresh=true, raw HTML, or an
@@ -1739,6 +1866,13 @@ TOOLS: List[ToolSpec] = [
                                "their subfolders, without deleted items, junk, drafts "
                                "and outbox; each hit then names its folder.",
             },
+            "folders": {
+                "type": "array", "items": {"type": "string"}, "maxItems": 10,
+                "description": "Several folders in one call instead of `folder` (e.g. "
+                               "[\"f:sent\", \"f:calendar\"]), up to 10, with the same "
+                               "filters: one entry per folder in `results`, each with "
+                               "its own cards, total_available and next_offset.",
+            },
             "sender": {
                 "type": "string",
                 "description": "Sender email or display-name substring, "
@@ -1842,7 +1976,7 @@ TOOLS: List[ToolSpec] = [
         name="get_message",
         description=(
             "Fetch one message by id (short alias from search results, e.g. "
-            "m12; raw EWS ids also work). format='full' (default) returns "
+            "m12; raw EWS ids also work), or up to 50 with `ids` in one call. format='full' (default) returns "
             "recipients, the cleaned body (quoted history stripped — use "
             "get_thread for the conversation) and the attachment inventory; "
             "format='concise' returns the compact card. `flag_complete` is "
@@ -1854,6 +1988,12 @@ TOOLS: List[ToolSpec] = [
         requires_ews=True,
         input_schema=_schema({
             "id": {"type": "string", "description": "Message id (m-alias or raw)."},
+            "ids": {
+                "type": "array", "items": {"type": "string"}, "maxItems": 50,
+                "description": "Several messages in one call instead of `id`, up to 50, "
+                               "fetched with one Exchange request: one entry per id in "
+                               "`messages`, with `message` or `error`.",
+            },
             "format": {"type": "string", "enum": ["full", "concise"],
                        "default": "full"},
             "include_html": {
@@ -1862,7 +2002,7 @@ TOOLS: List[ToolSpec] = [
                                "cases only — it is token-expensive).",
             },
             "fresh": dict(_FRESH_PROPERTY),
-        }, required=["id"]),
+        }),
         handler=_get_message,
     ),
     ToolSpec(

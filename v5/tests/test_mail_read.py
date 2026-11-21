@@ -1680,3 +1680,48 @@ def test_search_recursive_walks_subtrees_of_excluded_well_known_folders(tmp_path
         assert [i["subject"] for i in outbox_res["items"]] == ["outbox-sub", "outbox-root"]
     finally:
         gw._pool.shutdown(wait=True)
+
+
+# --- batches: several ids / folders in one call --------------------------------
+
+
+def test_get_message_ids_fetch_all_in_one_request(tmp_path):
+    one = _msg("RAW-1=", subject="First", text_body="One.")
+    two = _msg("RAW-2=", subject="Second", text_body="Two.")
+    account = _account()
+    from exchangelib.errors import ErrorItemNotFound
+    gone = ErrorItemNotFound("gone")
+    account.fetch = MagicMock(return_value=[one, gone, two])
+    ctx = _ctx(tmp_path, account)
+    res = _run(ctx, "get_message", ids=["RAW-1=", "RAW-X=", "RAW-2=", "RAW-1="],
+               format="concise")
+    assert account.fetch.call_count == 1
+    assert account.fetch.call_args.kwargs["ids"] == [
+        ("RAW-1=", None), ("RAW-X=", None), ("RAW-2=", None)]
+    assert res["count"] == 3 and res["failed"] == 1
+    assert res["messages"][0]["message"]["subject"] == "First"
+    assert res["messages"][1]["error"] == "not_found"
+    assert res["messages"][2]["message"]["subject"] == "Second"
+
+
+def test_get_message_rejects_id_and_ids(tmp_path):
+    ctx = _ctx(tmp_path, _account())
+    res = _run(ctx, "get_message", id="RAW-1=", ids=["RAW-2="])
+    assert res["ok"] is False
+    res = _run(ctx, "get_message", ids=[f"R{i}" for i in range(51)])
+    assert res["ok"] is False
+
+
+def test_search_messages_folders_one_entry_per_folder(tmp_path):
+    inbox = _Query([_msg("RAW-IN=", subject="In")])
+    sent = _Query([_msg("RAW-OUT=", subject="Out"), _msg("RAW-OUT2=", subject="Out2")])
+    account = _account(inbox=inbox, sent=sent)
+    ctx = _ctx(tmp_path, account)
+    ctx.gateway.resolve_folder = lambda acc, ref, aliaser: (
+        account.sent if ref == "f:sent" else account.inbox)
+    res = _run(ctx, "search_messages", folders=["f:inbox", "f:sent"])
+    assert res["ok"] is True and res["count"] == 2 and res["failed"] == 0
+    assert [r["folder"] for r in res["results"]] == ["f:inbox", "f:sent"]
+    assert [c["subject"] for c in res["results"][1]["items"]] == ["Out", "Out2"]
+    res = _run(ctx, "search_messages", folder="f:inbox", folders=["f:sent"])
+    assert res["ok"] is False

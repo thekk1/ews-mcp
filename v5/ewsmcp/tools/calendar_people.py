@@ -237,7 +237,56 @@ def _series_rule(item: Any) -> Any:
     return None
 
 
-async def _get_event(ctx: Context, id: str) -> Dict[str, Any]:
+MAX_EVENT_IDS = 50
+
+
+async def _get_events(ctx: Context, ids: List[str]) -> Dict[str, Any]:
+    """get_event with ids: all events with one GetItem request (account.fetch
+    with every id); one entry per id with `event` or `error`."""
+    tz = ctx.settings.ews_tz
+    ids = list(dict.fromkeys(ids))
+
+    def work(account: Any) -> List[Tuple[Any, Any]]:
+        out: List[Tuple[Any, Any]] = []
+        for item in account.fetch(ids=[(i, None) for i in ids]):
+            if isinstance(item, Exception) or item is None:
+                out.append((item, None))
+            else:
+                out.append((item, _series_rule(item)))
+        return out
+
+    results = await ctx.gateway.call(work)
+    events: List[Dict[str, Any]] = []
+    for pos, raw_id in enumerate(ids):
+        alias = ctx.aliaser.alias_for(raw_id, "e")
+        item, rule = results[pos] if pos < len(results) else (None, None)
+        if item is None or isinstance(item, Exception):
+            name = type(item).__name__ if item is not None else ""
+            bad = ("not_found" if item is None or any(k in name for k in ("NotFound", "InvalidId", "MalformedId"))
+                   else name)
+            events.append({"id": alias, "error": bad})
+            continue
+        events.append({"id": alias, "event": _event_full(ctx, item, rule, tz)})
+    failed = sum(1 for e in events if "error" in e)
+    out: Dict[str, Any] = {"ok": True, "count": len(events), "failed": failed, "events": events}
+    if failed:
+        out["hint"] = "not_found means the id went stale; re-run list_events for fresh ids."
+    return out
+
+
+async def _get_event(ctx: Context, id: Optional[str] = None,
+                     ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    if ids is not None:
+        if id is not None:
+            raise ToolError("validation", "pass `id` or `ids`, not both.")
+        if not isinstance(ids, list) or not ids or not all(isinstance(i, str) and i for i in ids):
+            raise ToolError("validation", "`ids` must be a non-empty list of event ids.")
+        if len(ids) > MAX_EVENT_IDS:
+            raise ToolError("validation", f"`ids` has {len(ids)} ids, at most {MAX_EVENT_IDS} per call.",
+                            hint="Split the list into several calls.")
+        return await _get_events(ctx, ids)
+    if not id:
+        raise ToolError("validation", "`id` (or `ids` for several events) is required.")
     tz = ctx.settings.ews_tz
 
     def work(account: Any) -> Any:
@@ -251,6 +300,11 @@ async def _get_event(ctx: Context, id: str) -> Dict[str, Any]:
         return item, _series_rule(item)
 
     item, rule = await ctx.gateway.call(work)
+    return {"ok": True, "event": _event_full(ctx, item, rule, tz)}
+
+
+def _event_full(ctx: Context, item: Any, rule: Any, tz: str) -> Dict[str, Any]:
+    """The full event of get_event."""
     event = event_card(item, ctx.aliaser, tz)
     event["attendees"] = _attendee_entries(item)
     source = getattr(item, "text_body", None) or ""
@@ -279,7 +333,7 @@ async def _get_event(ctx: Context, id: str) -> Dict[str, Any]:
     # Only the organizer's copy says whether the invitations went out.
     if my_response == "Organizer" and event["attendees"]:
         event["invitations_sent"] = bool(getattr(item, "meeting_request_was_sent", False))
-    return {"ok": True, "event": event}
+    return event
 
 
 async def _check_availability(ctx: Context, attendees: List[str], start: str,
@@ -619,7 +673,7 @@ TOOLS: List[ToolSpec] = [
         name="get_event",
         description=(
             "Fetch one calendar event in full by id (a short alias like 'e3' "
-            "from list_events, or a raw EWS id). Returns organizer, every "
+            "from list_events, or a raw EWS id), or up to 50 with `ids` in one call. Returns organizer, every "
             "attendee with their response (Accept/Decline/Tentative/…), the "
             "cleaned body text, a recurring flag, the rule of a series, the reminder "
             "(null if none), your own response and, for an event you organize, whether "
@@ -631,8 +685,12 @@ TOOLS: List[ToolSpec] = [
             "properties": {
                 "id": {"type": "string",
                        "description": "Event id — alias (e1, e2, …) or raw EWS id."},
+                "ids": {"type": "array", "items": {"type": "string"}, "maxItems": 50,
+                        "description": "Several events in one call instead of `id`, up to "
+                                       "50, fetched with one Exchange request: one entry "
+                                       "per id in `events`, with `event` or `error`."},
             },
-            "required": ["id"],
+            "required": [],
             "additionalProperties": False,
         },
         handler=_get_event,

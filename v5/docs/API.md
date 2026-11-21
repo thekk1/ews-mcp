@@ -19,7 +19,7 @@ the registry is the single source of truth for what exists.
 | `get_attachment` | read | read | Read one attachment of a message. |
 | `get_mailbox_overview` | read | read | The morning-brief workflow tool — start here. |
 | `list_events` | read | read | List calendar events overlapping a time window (default: today through +7d, server timezone). |
-| `get_event` | read | read | Fetch one calendar event in full by id (a short alias like 'e3' from list_events, or a raw EWS id). |
+| `get_event` | read | read | Fetch one calendar event in full by id (a short alias like 'e3' from list_events, or a raw EWS id), or up to 50 with `ids` in one call. |
 | `check_availability` | read | read | Check free/busy for one or more attendees and propose meeting slots. |
 | `find_people` | read | read | Find people by name or email fragment in the GAL (global address list) and/or the personal contacts folder. |
 | `get_contact` | read | read | Fetch one person in full by id — a p-alias from find_people, a raw contact id, or a plain email address. |
@@ -75,6 +75,7 @@ Search mail. TWO ENGINES, mutually exclusive: pass `query` (an Exchange AQS stri
 |---|---|---|---|
 | `query` | string | no | AQS query string — cannot be combined with the structured filters below. |
 | `folder` | string | no | Folder alias (f:inbox, f:sent, f7), path, raw id, or f:all for the whole mailbox: all mail folders with their subfolders, without deleted items, junk, drafts and outbox; each hit then names its folder. (default `f:inbox`) |
+| `folders` | array | no | Several folders in one call instead of `folder` (e.g. ["f:sent", "f:calendar"]), up to 10, with the same filters: one entry per folder in `results`, each with its own cards, total_available and next_offset. |
 | `sender` | string | no | Sender email or display-name substring, matched within each page; keep paging while next_offset is set (a page may hold fewer than `limit` items or none, and total_available is null on live searches). |
 | `from_` | string | no | DEPRECATED alias of `sender` — do not combine the two. |
 | `subject` | string | no | Subject substring. |
@@ -107,11 +108,12 @@ Check a whole list of values against a mail folder, or with folder=f:all the who
 
 #### `get_message` — read (min tier: read)
 
-Fetch one message by id (short alias from search results, e.g. m12; raw EWS ids also work). format='full' (default) returns recipients, the cleaned body (quoted history stripped — use get_thread for the conversation) and the attachment inventory; format='concise' returns the compact card. `flag_complete` is only reported when read live, i.e. with fresh=true. A not_found means the id went stale (items move) — re-run search_messages and retry with a fresh id.
+Fetch one message by id (short alias from search results, e.g. m12; raw EWS ids also work), or up to 50 with `ids` in one call. format='full' (default) returns recipients, the cleaned body (quoted history stripped — use get_thread for the conversation) and the attachment inventory; format='concise' returns the compact card. `flag_complete` is only reported when read live, i.e. with fresh=true. A not_found means the id went stale (items move) — re-run search_messages and retry with a fresh id.
 
 | parameter | type | required | description |
 |---|---|---|---|
-| `id` | string | yes | Message id (m-alias or raw). |
+| `id` | string | no | Message id (m-alias or raw). |
+| `ids` | array | no | Several messages in one call instead of `id`, up to 50, fetched with one Exchange request: one entry per id in `messages`, with `message` or `error`. |
 | `format` | string | no | (one of: `full`, `concise`; default `full`) |
 | `include_html` | boolean | no | Also return the raw HTML body (rendering edge cases only — it is token-expensive). (default `False`) |
 | `fresh` | boolean | no | true forces a live Exchange read instead of the local mirror (responses are stamped source=cache\|live). (default `False`) |
@@ -161,11 +163,12 @@ List calendar events overlapping a time window (default: today through +7d, serv
 
 #### `get_event` — read (min tier: read)
 
-Fetch one calendar event in full by id (a short alias like 'e3' from list_events, or a raw EWS id). Returns organizer, every attendee with their response (Accept/Decline/Tentative/…), the cleaned body text, a recurring flag, the rule of a series, the reminder (null if none), your own response and, for an event you organize, whether invitations were sent.
+Fetch one calendar event in full by id (a short alias like 'e3' from list_events, or a raw EWS id), or up to 50 with `ids` in one call. Returns organizer, every attendee with their response (Accept/Decline/Tentative/…), the cleaned body text, a recurring flag, the rule of a series, the reminder (null if none), your own response and, for an event you organize, whether invitations were sent.
 
 | parameter | type | required | description |
 |---|---|---|---|
-| `id` | string | yes | Event id — alias (e1, e2, …) or raw EWS id. |
+| `id` | string | no | Event id — alias (e1, e2, …) or raw EWS id. |
+| `ids` | array | no | Several events in one call instead of `id`, up to 50, fetched with one Exchange request: one entry per id in `events`, with `event` or `error`. |
 
 #### `check_availability` — read (min tier: read)
 

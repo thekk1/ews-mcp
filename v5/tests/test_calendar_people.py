@@ -697,3 +697,24 @@ def test_get_event_returns_occurrence_when_master_cannot_be_loaded(
     assert event["type"] == kind
     assert "recurrence" not in event
 
+
+
+def test_get_event_ids_fetch_all_in_one_request(tmp_path):
+    one = _event("RAW-EV-A", subject="Standup")
+    two = _event("RAW-EV-B", subject="Review")
+    for ev in (one, two):
+        ev.required_attendees = ev.optional_attendees = None
+        ev.text_body = ""
+    account = MagicMock()
+    from exchangelib.errors import ErrorItemNotFound
+    account.fetch.return_value = iter([one, ErrorItemNotFound("gone"), two])
+    ctx = _ctx(tmp_path, account)
+    a = ctx.aliaser.alias_for("RAW-EV-A", "e")
+    b = ctx.aliaser.alias_for("RAW-EV-B", "e")
+    res = _run(ctx, "get_event", {"ids": [a, "RAW-GONE", b]})
+    account.fetch.assert_called_once_with(
+        ids=[("RAW-EV-A", None), ("RAW-GONE", None), ("RAW-EV-B", None)])
+    assert res["count"] == 3 and res["failed"] == 1
+    assert res["events"][0]["id"] == a and res["events"][0]["event"]["subject"] == "Standup"
+    assert res["events"][1]["error"] == "not_found"
+    assert res["events"][2]["event"]["subject"] == "Review"
