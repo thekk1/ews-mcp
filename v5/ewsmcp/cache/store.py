@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Recorded in meta.schema so an operator inspecting a mirror can tell which
 # shape it holds; the migration itself is the additive check in _ensure_schema.
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS messages (
     sender_name         TEXT,
     sender_email        TEXT,
     to_json             TEXT,
+    cc_json             TEXT,
+    bcc_json            TEXT,
     subject             TEXT,
     date_ts             INTEGER,
     date_iso            TEXT,
@@ -224,6 +226,13 @@ class CacheStore:
             cols = {row["name"] for row in conn.execute("PRAGMA table_info(folders)")}
             if "folder_class" not in cols:
                 conn.execute("ALTER TABLE folders ADD COLUMN folder_class TEXT")
+            # Schema 3 keeps cc and bcc of a mail, which cards of sent mails show. Older
+            # rows have none, so the sent folder syncs again from the start and fills them.
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+            for col in ("cc_json", "bcc_json"):
+                if col not in cols:
+                    conn.execute(f"ALTER TABLE messages ADD COLUMN {col} TEXT")
+                    conn.execute("DELETE FROM sync_state WHERE key='item:sent'")
             conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
                 (str(_SCHEMA_VERSION),),
@@ -271,11 +280,12 @@ class CacheStore:
                     """
                     INSERT INTO messages (ews_id, changekey, folder,
                         conversation_id, sender_name, sender_email, to_json,
-                        subject, date_ts, date_iso, is_read, has_attachments,
+                        cc_json, bcc_json, subject, date_ts, date_iso, is_read, has_attachments,
                         importance, categories_json, body_clean,
                         internet_message_id, norm_text)
                     VALUES (:ews_id, :changekey, :folder, :conversation_id,
-                        :sender_name, :sender_email, :to_json, :subject,
+                        :sender_name, :sender_email, :to_json,
+                        :cc_json, :bcc_json, :subject,
                         :date_ts, :date_iso, :is_read, :has_attachments,
                         :importance, :categories_json, :body_clean,
                         :internet_message_id, :norm_text)
@@ -286,6 +296,8 @@ class CacheStore:
                         sender_name=excluded.sender_name,
                         sender_email=excluded.sender_email,
                         to_json=excluded.to_json,
+                        cc_json=excluded.cc_json,
+                        bcc_json=excluded.bcc_json,
                         subject=excluded.subject,
                         date_ts=excluded.date_ts,
                         date_iso=excluded.date_iso,
@@ -297,7 +309,7 @@ class CacheStore:
                         internet_message_id=excluded.internet_message_id,
                         norm_text=excluded.norm_text
                     """,
-                    r,
+                    {"cc_json": None, "bcc_json": None, **r},
                 )
         return len(rows)
 

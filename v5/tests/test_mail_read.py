@@ -633,6 +633,29 @@ def test_card_names_the_kind_of_a_meeting_item(tmp_path):
     assert item_kind(None) is None
 
 
+def test_card_of_an_own_mail_lists_all_recipients(tmp_path):
+    def rcpt(*emails):
+        return [SimpleNamespace(email_address=e, name=None) for e in emails]
+
+    sent = _msg("RAW-SENT=", sender="exec@corp.example",
+                to=rcpt("a@corp.example", "b@corp.example"))
+    sent.cc_recipients = rcpt("c@corp.example")
+    sent.bcc_recipients = rcpt("d@corp.example")
+    account = _account()
+    account.fetch = MagicMock(return_value=[sent])
+    ctx = _ctx(tmp_path, account)
+    card = _run(ctx, "get_message", id="RAW-SENT=", format="concise")["message"]
+    assert card["to"] == ["a@corp.example", "b@corp.example"]
+    assert card["cc"] == ["c@corp.example"]
+    assert card["bcc"] == ["d@corp.example"]
+    assert "to_count" not in card
+    received = _msg("RAW-IN=", to=rcpt("exec@corp.example", "b@corp.example"))
+    account.fetch = MagicMock(return_value=[received])
+    card = _run(ctx, "get_message", id="RAW-IN=", format="concise")["message"]
+    assert card["to_count"] == 2
+    assert "to" not in card and "cc" not in card
+
+
 def test_get_message_stale_id_maps_to_not_found(tmp_path):
     class ErrorItemNotFound(Exception):
         pass

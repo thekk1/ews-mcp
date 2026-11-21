@@ -119,8 +119,27 @@ def item_kind(item_class: Any) -> Optional[str]:
     return None
 
 
-def msg_card(item: Any, aliaser: IdAliaser, tz: str) -> Dict[str, Any]:
-    """MsgCard: the ≤~60-token search/list unit."""
+def own_recipients(card: Dict[str, Any], sender_email: Optional[str], own_email: Optional[str],
+                   to: List[str], cc: List[str], bcc: List[str]) -> None:
+    """Give a mail the signed-in account sent all its recipients.
+
+    Its sender is the account itself, so ``from`` says nothing about it; who it went to is
+    what a list of sent mails is read for. Other mails keep the short card.
+    """
+    if not own_email or (sender_email or "").strip().lower() != own_email.strip().lower():
+        return
+    card.pop("to_count", None)
+    card["to"] = list(to)
+    if cc:
+        card["cc"] = list(cc)
+    if bcc:
+        card["bcc"] = list(bcc)
+
+
+def msg_card(item: Any, aliaser: IdAliaser, tz: str,
+             own_email: Optional[str] = None) -> Dict[str, Any]:
+    """MsgCard: the ≤~60-token search/list unit; a mail ``own_email`` sent also has its
+    recipients (to, cc, bcc)."""
     text = getattr(item, "text_body", None) or ""
     try:
         text = strip_quoted_history(text)[0] or text
@@ -151,6 +170,9 @@ def msg_card(item: Any, aliaser: IdAliaser, tz: str) -> Dict[str, Any]:
     kind = item_kind(getattr(item, "item_class", None))
     if kind:
         card["kind"] = kind
+    own_recipients(card, getattr(getattr(item, "sender", None), "email_address", None), own_email,
+                   to, _emails(getattr(item, "cc_recipients", None)),
+                   _emails(getattr(item, "bcc_recipients", None)))
     return card
 
 

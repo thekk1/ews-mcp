@@ -224,3 +224,19 @@ def test_write_through_update_and_delete(tmp_path):
     res = _run(ctx, "delete_messages", ids=["RAW-1"])
     assert res["deleted"] == 1
     assert ctx.cache.get_message("RAW-1") is None  # tombstoned
+
+
+def test_card_of_an_own_mail_lists_all_recipients(tmp_path):
+    import json as _json
+    ctx = _ctx(tmp_path, NoTouchGateway())
+    own = make_row("RAW-9", subject="Planning", folder="sent",
+                   sender_email="Exec@corp.example", to=["a@corp.example", "b@corp.example"])
+    own["cc_json"] = _json.dumps(["c@corp.example"])
+    own["bcc_json"] = _json.dumps([])
+    ctx.cache.upsert_messages([own])
+    card = _run(ctx, "get_message", id="RAW-9", format="concise")["message"]
+    assert card["to"] == ["a@corp.example", "b@corp.example"]
+    assert card["cc"] == ["c@corp.example"]
+    assert "bcc" not in card and "to_count" not in card
+    other = _run(ctx, "get_message", id="RAW-1", format="concise")["message"]
+    assert "to" not in other and "cc" not in other

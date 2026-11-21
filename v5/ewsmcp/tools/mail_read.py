@@ -35,6 +35,7 @@ from ..dto import (
     is_pkcs7_candidate,
     msg_card,
     msg_full,
+    own_recipients,
     sniff_smime_type,
 )
 from ..errors import ToolError, map_exception
@@ -113,6 +114,16 @@ def _row_card(ctx: Context, row: Any) -> Dict[str, Any]:
         card["attach"] = True
     if (row["importance"] or "").lower() == "high":
         card["importance"] = "high"
+    keys = row.keys()
+
+    def addresses(col: str) -> List[str]:
+        try:
+            return json.loads(row[col] or "[]") if col in keys else []
+        except ValueError:
+            return []
+
+    own_recipients(card, row["sender_email"], ctx.settings.ews_email,
+                   addresses("to_json"), addresses("cc_json"), addresses("bcc_json"))
     return card
 
 
@@ -146,7 +157,8 @@ def _row_full(ctx: Context, row: Any) -> Dict[str, Any]:
 # pull full MIME just to render a card).
 _PROJECTION = (
     "id", "subject", "sender", "datetime_received", "is_read",
-    "has_attachments", "text_body", "to_recipients", "conversation_id",
+    "has_attachments", "text_body", "to_recipients", "cc_recipients",
+    "bcc_recipients", "conversation_id",
     "message_id", "importance", "attachments", "item_class",
 )
 
@@ -213,7 +225,8 @@ async def _cards_off_loop(ctx: Context, items: List[Any], tz: str) -> List[Dict[
              getattr(it, "message_id", None))
             for it in items if getattr(it, "id", None)
         ])
-        return [msg_card(it, ctx.aliaser, tz) for it in items]
+        own = ctx.settings.ews_email
+        return [msg_card(it, ctx.aliaser, tz, own) for it in items]
 
     return await asyncio.to_thread(build)
 
@@ -1242,7 +1255,8 @@ async def _get_message(ctx: Context, id: str, format: str = "full",
         # Card projection: never pull the full item (incl. MIME) for a card.
         item = await ctx.gateway.call(
             lambda account: _fetch_one(account, raw_id, only=list(_PROJECTION)))
-        return _stamp({"ok": True, "message": msg_card(item, ctx.aliaser, tz)},
+        return _stamp({"ok": True, "message": msg_card(item, ctx.aliaser, tz,
+                                                       ctx.settings.ews_email)},
                       "live")
 
     def work(account: Any) -> Tuple[Any, Dict[int, str]]:
@@ -1706,8 +1720,9 @@ TOOLS: List[ToolSpec] = [
             "get_attachment. A card of a meeting invitation, response or "
             "cancellation or of a calendar item carries `kind` "
             "(meeting_request, meeting_response, meeting_cancellation, event); "
-            "a mail has none. If an id later goes stale (items move), re-run "
-            "this search for fresh ids."
+            "a mail has none. A card of a mail the signed-in account sent "
+            "lists all its recipients in `to`, `cc` and `bcc`. If an id later "
+            "goes stale (items move), re-run this search for fresh ids."
         ),
         side_effect_class="read",
         requires_ews=True,

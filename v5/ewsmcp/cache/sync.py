@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 ITEM_FIELDS = [
     "id", "changekey", "subject", "sender", "datetime_received", "is_read",
     "has_attachments", "importance", "categories", "conversation_id",
-    "message_id", "to_recipients", "text_body",
+    "message_id", "to_recipients", "cc_recipients", "bcc_recipients", "text_body",
 ]
 TASK_FIELDS = ["id", "changekey", "subject", "due_date", "is_complete", "status"]
 BODY_CLEAN_MAX = 20_000
@@ -74,11 +74,14 @@ def row_from_message(item: Any, folder_key: str, tz: str) -> Dict[str, Any]:
             body_clean = clean_body(text, max_chars=BODY_CLEAN_MAX)["text"]
         except Exception:
             body_clean = text[:BODY_CLEAN_MAX]
-    to = [
-        r.email_address
-        for r in (getattr(item, "to_recipients", None) or [])
-        if getattr(r, "email_address", None)
-    ]
+    to, cc, bcc = (
+        [
+            r.email_address
+            for r in (getattr(item, field, None) or [])
+            if getattr(r, "email_address", None)
+        ]
+        for field in ("to_recipients", "cc_recipients", "bcc_recipients")
+    )
     received = getattr(item, "datetime_received", None)
     conv = getattr(item, "conversation_id", None)
     imid = getattr(item, "message_id", None)
@@ -90,6 +93,8 @@ def row_from_message(item: Any, folder_key: str, tz: str) -> Dict[str, Any]:
         "sender_name": sender_name,
         "sender_email": sender_email,
         "to_json": json.dumps(to, ensure_ascii=False),
+        "cc_json": json.dumps(cc, ensure_ascii=False),
+        "bcc_json": json.dumps(bcc, ensure_ascii=False),
         "subject": subject,
         "date_ts": _ts(received),
         "date_iso": fmt_dt(received, tz),

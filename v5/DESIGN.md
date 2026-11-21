@@ -123,7 +123,7 @@ transaction and run off the event loop.
 
 ## §DTOs — token economy
 
-`MsgCard` (~60 tokens): id, from, subject, date, 200-char snippet, flags.
+`MsgCard` (~60 tokens): id, from, subject, date, 200-char snippet, flags. A mail the signed-in account sent also has all its recipients (`to`, `cc`, `bcc`), since its `from` is the account itself.
 `MsgFull`: card + recipients + CLEANED body (bilingual quoted-history +
 signature stripping) + attachment inventory. Raw HTML only on explicit
 `include_html=true`. Full HTML bodies routinely exceed 100 kB for a short

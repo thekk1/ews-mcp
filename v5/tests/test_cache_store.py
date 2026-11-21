@@ -236,3 +236,50 @@ def test_schema_1_mirror_gains_folder_class_without_losing_rows(tmp_path):
         assert rows[0]["folder_class"] is None  # migrated, not yet backfilled
     finally:
         store.close()
+
+
+_LEGACY_MESSAGES_DDL = """
+CREATE TABLE messages (
+    ews_id TEXT PRIMARY KEY, changekey TEXT, folder TEXT NOT NULL,
+    conversation_id TEXT, sender_name TEXT, sender_email TEXT, to_json TEXT,
+    subject TEXT, date_ts INTEGER, date_iso TEXT,
+    is_read INTEGER NOT NULL DEFAULT 1, has_attachments INTEGER NOT NULL DEFAULT 0,
+    importance TEXT, categories_json TEXT, body_clean TEXT,
+    internet_message_id TEXT, norm_text TEXT
+);
+CREATE TABLE sync_state (key TEXT PRIMARY KEY, token TEXT, as_of INTEGER);
+INSERT INTO sync_state VALUES ('item:sent', 'TOK-SENT', 1);
+INSERT INTO sync_state VALUES ('item:inbox', 'TOK-IN', 1);
+"""
+
+
+def test_schema_2_mirror_gains_cc_and_bcc_and_syncs_sent_again(tmp_path):
+    """Rows of a schema-2 mirror have no cc or bcc; the sent folder, whose cards
+    show them, starts its sync again so the rows get them. The inbox keeps its
+    token."""
+    db_path = tmp_path / "legacy2.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.executescript(_LEGACY_MESSAGES_DDL)
+    legacy.commit()
+    legacy.close()
+
+    store = CacheStore(db_path)
+    try:
+        assert store.get_sync_state("item:sent") is None
+        assert store.get_sync_state("item:inbox") == "TOK-IN"
+        row = make_row("S1", folder="sent", to=["b@corp.example"])
+        row["cc_json"] = json.dumps(["c@corp.example"])
+        store.upsert_messages([row, make_row("S2", folder="sent")])
+        assert json.loads(store.get_message("S1")["cc_json"]) == ["c@corp.example"]
+        assert store.get_message("S2")["cc_json"] is None
+    finally:
+        store.close()
+    # opening the migrated mirror again keeps the sent token
+    store = CacheStore(db_path)
+    try:
+        store.set_sync_state("item:sent", "TOK-NEW", 2)
+        store.close()
+        store = CacheStore(db_path)
+        assert store.get_sync_state("item:sent") == "TOK-NEW"
+    finally:
+        store.close()
