@@ -80,7 +80,7 @@ Search mail. TWO ENGINES, mutually exclusive: pass `query` (an Exchange AQS stri
 | `from_` | string | no | DEPRECATED alias of `sender` — do not combine the two. |
 | `subject` | string | no | Subject substring. |
 | `since` | string | no | Window start: 'today', '+Nd', YYYY-MM-DD, or ISO datetime (server timezone). |
-| `until` | string | no | Window end: 'today', '+Nd', YYYY-MM-DD, or ISO datetime (server timezone). |
+| `until` | string | no | Window end, inclusive: 'today', '+Nd', YYYY-MM-DD (the whole day), or ISO datetime (server timezone). |
 | `is_unread` | boolean | no |  |
 | `has_attachments` | boolean | no |  |
 | `categories` | array | no | Match messages carrying all listed Outlook categories; live search uses contains matching whereas the local mirror matches exact category elements. Cannot combine with `query`. |
@@ -102,7 +102,7 @@ Check a whole list of values against a mail folder, or with folder=f:all the who
 | `folder` | string | no | Mail folder alias, path, or raw id, e.g. f:inbox (default) or f:sent, or f:all for all mail folders (without Deleted Items, Junk, Drafts and Outbox; each hit then names its folder). |
 | `recursive` | boolean | no | Also search the subfolders of `folder`. |
 | `since` | string | no | Received at or after (ISO date). |
-| `until` | string | no | Received at or before (ISO date). |
+| `until` | string | no | Received on or before (ISO date: the whole day, or ISO datetime). |
 | `only_missing` | boolean | no | Return only the values without a match. |
 | `fresh` | boolean | no | true forces a live Exchange read instead of the local mirror (responses are stamped source=cache\|live). (default `False`) |
 
