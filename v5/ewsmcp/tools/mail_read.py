@@ -19,6 +19,7 @@ import base64
 import json
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -422,19 +423,31 @@ SENDER_SCAN_MAX = 5000
 SENDER_SCAN_CHUNK = 250
 
 
-def _scan_for_sender(qs: Any, needle: str, *, offset: int,
-                     limit: int) -> Tuple[List[Any], bool, int, bool]:
+# A search stops reading after this many seconds and returns what it has:
+# the MCP client gives up after 60 s, while the worker threads would keep
+# reading and hold up every later call of the user.
+SEARCH_TIME_BUDGET_S = 45.0
+
+
+def _scan_for_sender(qs: Any, needle: str, *, offset: int, limit: int,
+                     deadline: Optional[float] = None,
+                     ) -> Tuple[List[Any], bool, int, bool, bool]:
     """Items of ``qs`` whose sender contains ``needle``, matches[offset:offset+limit].
 
-    Returns ``(page, more, scanned, capped)``: ``more`` is True when a match
-    beyond the page exists, ``capped`` when the scan stopped at
-    SENDER_SCAN_MAX rows with part of the folder unread.
+    Returns ``(page, more, scanned, capped, timed_out)``: ``more`` is True when
+    a match beyond the page exists, ``capped`` when the scan stopped at
+    SENDER_SCAN_MAX rows with part of the folder unread, ``timed_out`` when it
+    stopped at ``deadline`` (time.monotonic()) with part of the folder unread.
     """
     wanted = max(0, offset) + max(0, limit)
     matches: List[Any] = []
     cursor = 0
     exhausted = False
+    timed_out = False
     while len(matches) <= wanted and cursor < SENDER_SCAN_MAX:
+        if deadline is not None and time.monotonic() >= deadline:
+            timed_out = True
+            break
         batch = list(qs[cursor:cursor + SENDER_SCAN_CHUNK])
         if not batch:
             exhausted = True
@@ -445,8 +458,8 @@ def _scan_for_sender(qs: Any, needle: str, *, offset: int,
             exhausted = True
             break
     more = len(matches) > wanted
-    capped = not exhausted and not more
-    return matches[offset:wanted], more, cursor, capped
+    capped = not exhausted and not more and not timed_out
+    return matches[offset:wanted], more, cursor, capped, timed_out and not more
 
 
 def _build_queryset(
@@ -645,16 +658,19 @@ async def _search_all_folders(
     folders = all_in_scope[:MAX_FANOUT_FOLDERS]
     skipped = len(all_in_scope) - len(folders)
     wanted = offset + limit
+    deadline = time.monotonic() + SEARCH_TIME_BUDGET_S
 
-    async def one(target: Any) -> Tuple[List[Any], Optional[int], int, bool]:
-        def work(_account: Any) -> Tuple[List[Any], Optional[int], int, bool]:
+    async def one(target: Any) -> Tuple[List[Any], Optional[int], int, bool, bool]:
+        def work(_account: Any) -> Tuple[List[Any], Optional[int], int, bool, bool]:
+            if time.monotonic() >= deadline:
+                return [], None, 0, False, True  # waited for a worker too long
             qs = _project(build_qs(target))
             if sender_needle:
-                page, more, scanned, capped = _scan_for_sender(
-                    qs, sender_needle, offset=0, limit=wanted)
-                return page, (wanted if more or capped else None), scanned, capped
+                page, more, scanned, capped, late = _scan_for_sender(
+                    qs, sender_needle, offset=0, limit=wanted, deadline=deadline)
+                return page, (wanted if more or capped else None), scanned, capped, late
             page, more = paginate(qs, offset=0, limit=wanted)
-            return page, more, len(page), False
+            return page, more, len(page), False, False
         return await ctx.gateway.call(work)
 
     results = await asyncio.gather(*(one(f) for _, f in folders),
@@ -682,6 +698,7 @@ async def _search_all_folders(
     hits: List[Tuple[str, Any]] = []
     failed: List[str] = []
     capped_folders: List[str] = []
+    late_folders: List[str] = []
     scanned_total = 0
     truncated = False
     for (path, _), result in zip(folders, results):
@@ -689,11 +706,13 @@ async def _search_all_folders(
             logger.warning("search failed in a folder: %s", type(result).__name__)
             failed.append(path)
             continue
-        page, more, scanned, capped = result
+        page, more, scanned, capped, late = result
         truncated = truncated or more is not None
         scanned_total += scanned
         if capped:
             capped_folders.append(path)
+        if late:
+            late_folders.append(path)
         hits.extend((path, item) for item in page)
     hits.sort(key=lambda hit: getattr(hit[1], "datetime_received", None)
               or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
@@ -703,7 +722,8 @@ async def _search_all_folders(
         "hits": page_hits,
         "scanned": scanned_total,
         "scan_capped": capped_folders,
-        "total": (None if (truncated or failed or skipped or sender_needle)
+        "timed_out": late_folders,
+        "total": (None if (truncated or failed or skipped or sender_needle or late_folders)
                   else len(hits)),
         "next_offset": next_offset,
         "searched": len(folders) - len(failed),
@@ -874,10 +894,11 @@ async def _search_messages(ctx: Context, query: Optional[str] = None,
                 total = None
         qs = _project(qs)
         if sender_needle:
-            page, more, scanned, capped = _scan_for_sender(
-                qs, sender_needle, offset=offset, limit=limit)
-            scan.update(scanned=scanned, capped=capped)
-            return page, (offset + limit if more or capped else None), None
+            page, more, scanned, capped, late = _scan_for_sender(
+                qs, sender_needle, offset=offset, limit=limit,
+                deadline=time.monotonic() + SEARCH_TIME_BUDGET_S)
+            scan.update(scanned=scanned, capped=capped, late=late)
+            return page, (offset + limit if more or capped or late else None), None
         page, next_off = paginate(qs, offset=offset, limit=limit)
         return page, next_off, total
 
@@ -921,6 +942,14 @@ async def _search_messages(ctx: Context, query: Optional[str] = None,
                 f"{', '.join(capped)}: only the newest {SENDER_SCAN_MAX} messages of the "
                 "period were read for the sender; narrow the period with since/until "
                 "to read further back.")
+    late = (found.get("timed_out", []) if fan_out
+            else ([folder] if scan.get("late") else []))
+    if late:
+        out["timed_out"] = late
+        out["time_hint"] = (
+            f"Stopped after {int(SEARCH_TIME_BUDGET_S)} s; not fully read: {', '.join(late)}. "
+            "Results are incomplete. Search one folder or a shorter period, and run "
+            "searches one after another, not in parallel.")
     return _stamp(out, "live")
 
 

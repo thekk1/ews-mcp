@@ -1397,6 +1397,34 @@ def test_search_sender_reports_a_capped_scan(tmp_path, monkeypatch):
     assert res["next_offset"] is not None
 
 
+def test_search_stops_at_the_time_budget(tmp_path, monkeypatch):
+    # The MCP client gives up after 60 s; the search must answer before that
+    # and leave no worker reading on.
+    monkeypatch.setattr(mail_read, "SEARCH_TIME_BUDGET_S", 0.0)
+    items = [
+        _msg(f"ID-{n}=", subject=f"target-{n}", sender="target@example.com",
+             dt=datetime(2026, 7, 1, tzinfo=TZ) - timedelta(minutes=n))
+        for n in range(5)
+    ]
+    ctx = _whole_mailbox(tmp_path, {"Inbox": _Query(items)})
+    res = _run(ctx, "search_messages", folder="f:all", sender="target")
+    assert res["items"] == [] and res["timed_out"] == ["Inbox"]
+    assert "not fully read: Inbox" in res["time_hint"]
+    assert res["total_available"] is None and "scan_capped" not in res
+
+
+def test_search_without_time_budget_hit_has_no_hint(tmp_path):
+    items = [
+        _msg(f"ID-{n}=", subject=f"target-{n}", sender="target@example.com",
+             dt=datetime(2026, 7, 1, tzinfo=TZ) - timedelta(minutes=n))
+        for n in range(5)
+    ]
+    ctx = _whole_mailbox(tmp_path, {"Inbox": _Query(items)})
+    res = _run(ctx, "search_messages", folder="f:all", sender="target")
+    assert len(res["items"]) == 5
+    assert "timed_out" not in res and "time_hint" not in res
+
+
 def test_check_messages_rejects_a_glob_folder(tmp_path):
     account = _account()
     account.mail_folders = [("Inbox", _Query([_neutral_msg("M1=", "RFP-1")]))]
